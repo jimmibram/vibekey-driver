@@ -14,7 +14,9 @@ import "Model.js" as Model
 // action assigned to each control. The daemon publishes what it sees to
 // $XDG_RUNTIME_DIR/vibekey/state.json; assignments live in
 // ~/.config/omarchy/vibekey/config.json and are written through
-// bin/vibekey-config so the file is never half-written.
+// bin/vibekey-config so the file is never half-written. While the popup is
+// open it heartbeats $XDG_RUNTIME_DIR/vibekey/preview, and the daemon only
+// reports controls instead of running their actions.
 Panel {
   id: root
   moduleName: "jimmibram.vibekey"
@@ -25,6 +27,7 @@ Panel {
   readonly property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || "/tmp"
   readonly property string configHome: Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")
   readonly property string statePath: runtimeDir + "/vibekey/state.json"
+  readonly property string previewPath: runtimeDir + "/vibekey/preview"
   readonly property string configPath: configHome + "/omarchy/vibekey/config.json"
   readonly property string seenPath: configHome + "/omarchy/vibekey/seen.json"
 
@@ -40,6 +43,7 @@ Panel {
   property var config: ({})
   property var seen: ({})
   property var presets: []
+  property var knobPresets: []
 
   readonly property bool daemonRunning: daemon.running
   readonly property bool connected: state.connected === true
@@ -49,22 +53,38 @@ Panel {
   readonly property var rows: Model.controls(config, seen, presets)
   readonly property var extras: rows.filter(function(r) { return r.extra })
   readonly property var editorOptions: Model.editorOptions(presets)
+  readonly property var knobTurnOptions: Model.knobTurnOptions(knobPresets)
+  readonly property string knobTurnMode: Model.knobTurnMode(config, knobPresets)
   readonly property string statusText: Model.statusText(state, daemonRunning)
 
-  // Controls in the order the drawing shows them, top to bottom.
-  readonly property var slotOrder: ["knob_right", "knob", "knob_left", "key1", "key2", "key3"]
+  // Controls in the order the drawing shows them, top to bottom. The knob
+  // turn is one setting that covers both directions.
+  readonly property var slotOrder: ["knob_turn", "knob", "key1", "key2", "key3"]
   readonly property var slotTitles: ({
-    knob_right: "Turn right", knob: "Press knob", knob_left: "Turn left",
+    knob_turn: "Turn knob", knob: "Press knob",
     key1: "Voice key", key2: "Confirm key", key3: "Cancel key"
   })
+  readonly property var slotHints: ({
+    knob_turn: "Either direction, one notch at a time", knob: "Push the knob",
+    key1: "Top key with the microphone", key2: "The ✓ key", key3: "The ✕ key"
+  })
 
-  function summaryFor(key) { return Model.summary(root.assigned[key], root.presets) }
+  function isKnobTurn(key) { return key === "knob_turn" || key === "knob_right" || key === "knob_left" }
+  function isAssigned(key) {
+    if (key === "knob_turn") return !!(root.assigned.knob_right || root.assigned.knob_left)
+    return !!root.assigned[key]
+  }
+  function summaryFor(key) {
+    if (key === "knob_turn") return Model.knobTurnSummary(root.config, root.knobPresets, root.presets)
+    return Model.summary(root.assigned[key], root.presets)
+  }
   function titleFor(key) {
     if (root.slotTitles[key]) return root.slotTitles[key]
     for (var i = 0; i < root.rows.length; i++) if (root.rows[i].key === key) return root.rows[i].label
     return key
   }
   function hintFor(key) {
+    if (root.slotHints[key]) return root.slotHints[key]
     for (var i = 0; i < root.rows.length; i++) if (root.rows[i].key === key) return root.rows[i].hint
     return key
   }
@@ -72,7 +92,11 @@ Panel {
   // The control whose editor is open, and the one the device just sent.
   property string editing: ""
   property string flashing: ""
+  property string learned: ""   // "<slot> now answers to <label>", shown in the editor
   property real lastEventAt: 0
+  property int lastEvents: -1
+  property real knobAngle: 0
+  readonly property real knobStep: 18
   property bool installingAccess: false
   property string saveError: ""
 
@@ -87,14 +111,29 @@ Panel {
     var next = Model.parseJson(text, null)
     if (!next) return
     root.state = next
+    var events = Number(next.events || 0)
     var last = next.last
     if (last && Number(last.at) > root.lastEventAt) {
       if (root.lastEventAt > 0) {
-        root.flashing = String(last.slot || last.id || "")
+        var slot = String(last.slot || "")
+        // Learning: with a key's editor open, a control the firmware sends under
+        // some other code becomes that key.
+        var learnable = ["key1", "key2", "key3", "knob"].indexOf(root.editing) !== -1
+        if (root.opened && learnable && last.id && !Model.FACTORY_IDS[last.id] && slot !== root.editing) {
+          root.runConfig(["alias", String(last.id), root.editing])
+          root.learned = root.titleFor(root.editing) + " now answers to " + String(last.label || last.id)
+          slot = root.editing
+        }
+        root.flashing = slot || String(last.id || "")
         flashTimer.restart()
+        // Turn the drawn knob with the real one: one step per notch seen.
+        var notches = root.lastEvents >= 0 && events > root.lastEvents ? events - root.lastEvents : 1
+        if (last.slot === "knob_right") root.knobAngle += root.knobStep * notches
+        else if (last.slot === "knob_left") root.knobAngle -= root.knobStep * notches
       }
       root.lastEventAt = Number(last.at)
     }
+    root.lastEvents = events
   }
 
   function refreshFiles() {
@@ -137,6 +176,7 @@ Panel {
     onLoaded: {
       var parsed = Model.parseJson(text(), {})
       root.presets = Array.isArray(parsed.presets) ? parsed.presets : []
+      root.knobPresets = Array.isArray(parsed.knob_turn) ? parsed.knob_turn : []
     }
   }
 
@@ -153,6 +193,24 @@ Panel {
     id: flashTimer
     interval: 1200
     onTriggered: root.flashing = ""
+  }
+
+  // ------------------------------------------------------------ preview mode
+
+  // While the panel is open the daemon must only report controls, not run
+  // them. It trusts the heartbeat for six seconds, so a crashed shell never
+  // leaves the keypad dead.
+  function writePreview(value) {
+    Quickshell.execDetached(["bash", "-c",
+      "mkdir -p " + Util.shellQuote(root.runtimeDir + "/vibekey") + " && printf '%s' " + Util.shellQuote(value) + " > " + Util.shellQuote(root.previewPath)])
+  }
+
+  Timer {
+    interval: 2000
+    running: root.opened
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: root.writePreview("open")
   }
 
   // ------------------------------------------------------------ the driver
@@ -216,6 +274,13 @@ Panel {
     root.runConfig(["set-button", key, JSON.stringify(entry)])
   }
 
+  function saveKnobTurn(mode) {
+    var pair = mode === "none" ? { right: null, left: null } : Model.entriesForKnobPreset(Model.presetById(root.knobPresets, mode))
+    if (!pair) return
+    root.saveButton("knob_right", pair.right)
+    root.saveButton("knob_left", pair.left)
+  }
+
   function setGrab(enabled) {
     var next = Model.isObject(root.config) ? JSON.parse(JSON.stringify(root.config)) : {}
     next.grab = enabled
@@ -233,7 +298,23 @@ Panel {
     root.saveButton(key, Model.entryForPreset(Model.presetById(root.presets, mode)))
   }
 
-  readonly property string editorMode: root.editing === ""
+  readonly property bool editingExtra: root.editing !== "" && root.slotOrder.indexOf(root.editing) === -1
+
+  function setAlias(rawId, slot) {
+    root.runConfig(["alias", rawId, slot])
+    if (slot !== "none") {
+      root.learned = root.titleFor(slot) + " now answers to " + root.titleFor(rawId)
+      root.editing = slot
+    }
+  }
+
+  function forgetControl(rawId) {
+    root.runConfig(["forget", rawId])
+    root.editing = ""
+    Qt.callLater(function() { seenFile.reload() })
+  }
+
+  readonly property string editorMode: root.editing === "" || root.editing === "knob_turn"
     ? "none"
     : (root.draftMode !== "" ? root.draftMode : Model.editorMode(root.assigned[root.editing], root.presets))
   readonly property bool editorTyping: editorMode === "custom" || editorMode === "keys"
@@ -250,7 +331,7 @@ Panel {
     onExited: function(code) {
       root.installingAccess = false
       if (code !== 0) root.saveError = "Could not install the device rule (exit " + code + ")"
-      // The daemon retries on its own every second.
+      // The daemon retries on its own.
     }
   }
 
@@ -263,6 +344,7 @@ Panel {
 
   function toggleEditor(key) {
     root.draftMode = ""
+    root.learned = ""
     root.editing = root.editing === key ? "" : key
     var at = root.cursorKeys.indexOf(key)
     if (at >= 0) root.cursorIndex = at
@@ -282,6 +364,7 @@ Panel {
     } else {
       root.editing = ""
       root.draftMode = ""
+      root.writePreview("closed")
     }
   }
 
@@ -327,7 +410,8 @@ Panel {
     property bool compact: false
     readonly property bool editingThis: root.editing === controlKey
     readonly property bool flashingThis: root.flashing === controlKey
-    readonly property bool assignedThis: !!root.assigned[controlKey]
+      || (controlKey === "knob_turn" && (root.flashing === "knob_right" || root.flashing === "knob_left"))
+    readonly property bool assignedThis: root.isAssigned(controlKey)
 
     height: compact ? Style.space(30) : Style.space(40)
     hasCursor: root.cursorActive && root.cursorKeys[root.cursorIndex] === controlKey
@@ -551,8 +635,9 @@ Panel {
             readonly property real keyGap: Style.space(12)
             readonly property real keysTop: Style.space(150)
             readonly property real labelX: bodyWidth + Style.space(26)
-            readonly property real labelHeight: Style.space(40)
-            readonly property real knobRowStep: Style.space(42)
+            readonly property real knobRowStep: Style.space(22)
+            readonly property real knobEdge: body.x + bodyWidth / 2 + knobSize / 2
+            readonly property real keyEdge: body.x + bodyWidth / 2 + keySize / 2
 
             function keyCenterY(index) {
               return keysTop + Style.space(10) + keySize / 2 + index * (keySize + keyGap)
@@ -599,11 +684,11 @@ Panel {
                 }
               }
 
-              // The knob: a ring with a position tick. Lights when pressed or turned.
+              // The knob: a ring with a position tick that turns with the real one.
               Rectangle {
                 id: knob
-                readonly property bool lit: root.flashing === "knob" || root.flashing === "knob_right" || root.flashing === "knob_left"
-                readonly property bool editingThis: root.editing === "knob" || root.editing === "knob_right" || root.editing === "knob_left"
+                readonly property bool lit: root.isKnobTurn(root.flashing) || root.flashing === "knob"
+                readonly property bool editingThis: root.isKnobTurn(root.editing) || root.editing === "knob"
                 x: (parent.width - width) / 2
                 y: device.knobCenterY - height / 2
                 width: device.knobSize
@@ -612,8 +697,8 @@ Panel {
                 color: Qt.alpha(root.foreground, editingThis ? 0.2 : 0.1)
                 border.width: Math.max(2, Style.space(3))
                 border.color: lit ? root.accent : (editingThis ? Qt.alpha(root.accent, 0.8) : Qt.alpha(root.foreground, 0.4))
-                rotation: root.flashing === "knob_right" ? 18 : (root.flashing === "knob_left" ? -18 : 0)
-                Behavior on rotation { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                rotation: root.knobAngle
+                Behavior on rotation { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
                 Behavior on border.color { ColorAnimation { duration: 120 } }
 
                 Rectangle {
@@ -625,12 +710,20 @@ Panel {
                   color: knob.lit ? root.accent : Qt.alpha(root.foreground, 0.6)
                 }
 
-                Rectangle {
-                  anchors.centerIn: parent
-                  width: Style.space(10)
-                  height: width
-                  radius: width / 2
-                  color: root.flashing === "knob" ? root.accent : Qt.alpha(root.foreground, root.editing === "knob" ? 0.5 : 0.2)
+                // Faint detents so the turn is visible.
+                Repeater {
+                  model: 12
+                  Rectangle {
+                    required property int index
+                    width: Math.max(1, Style.space(1))
+                    height: Style.space(4)
+                    x: knob.width / 2 - width / 2
+                    y: Style.space(5)
+                    transformOrigin: Item.Center
+                    transform: Rotation { origin.x: width / 2; origin.y: knob.height / 2 - Style.space(5); angle: index * 30 }
+                    color: Qt.alpha(root.foreground, 0.18)
+                    visible: index !== 0
+                  }
                 }
 
                 MouseArea {
@@ -638,6 +731,17 @@ Panel {
                   cursorShape: Qt.PointingHandCursor
                   onClicked: root.toggleEditor("knob")
                 }
+              }
+
+              // The knob centre marks a press.
+              Rectangle {
+                x: (parent.width - width) / 2
+                y: device.knobCenterY - height / 2
+                width: Style.space(10)
+                height: width
+                radius: width / 2
+                color: root.flashing === "knob" ? root.accent : Qt.alpha(root.foreground, root.editing === "knob" ? 0.5 : 0.2)
+                Behavior on color { ColorAnimation { duration: 120 } }
               }
 
               // Power switch on the edge.
@@ -670,16 +774,17 @@ Panel {
             // Leader lines from the drawing to the labels.
             Repeater {
               model: [
-                { key: "knob_right", y: body.y + device.knobCenterY - device.knobRowStep, from: body.x + device.bodyWidth / 2 + device.knobSize / 2 },
-                { key: "knob", y: body.y + device.knobCenterY, from: body.x + device.bodyWidth / 2 + device.knobSize / 2 },
-                { key: "knob_left", y: body.y + device.knobCenterY + device.knobRowStep, from: body.x + device.bodyWidth / 2 + device.knobSize / 2 },
-                { key: "key1", y: body.y + device.keyCenterY(0), from: body.x + device.bodyWidth / 2 + device.keySize / 2 },
-                { key: "key2", y: body.y + device.keyCenterY(1), from: body.x + device.bodyWidth / 2 + device.keySize / 2 },
-                { key: "key3", y: body.y + device.keyCenterY(2), from: body.x + device.bodyWidth / 2 + device.keySize / 2 }
+                { key: "knob_turn", y: body.y + device.knobCenterY - device.knobRowStep, from: device.knobEdge },
+                { key: "knob", y: body.y + device.knobCenterY + device.knobRowStep, from: device.knobEdge },
+                { key: "key1", y: body.y + device.keyCenterY(0), from: device.keyEdge },
+                { key: "key2", y: body.y + device.keyCenterY(1), from: device.keyEdge },
+                { key: "key3", y: body.y + device.keyCenterY(2), from: device.keyEdge }
               ]
               delegate: Rectangle {
                 required property var modelData
-                readonly property bool hot: root.flashing === modelData.key || root.editing === modelData.key
+                readonly property bool hot: root.editing === modelData.key
+                  || root.flashing === modelData.key
+                  || (modelData.key === "knob_turn" && root.isKnobTurn(root.flashing))
                 x: modelData.from + Style.space(6)
                 y: modelData.y
                 width: device.labelX - x - Style.space(4)
@@ -696,20 +801,18 @@ Panel {
               }
             }
 
-            ControlLabel { controlKey: "knob_right"; x: device.labelX; y: body.y + device.knobCenterY - device.knobRowStep - height / 2; width: device.width - device.labelX }
-            ControlLabel { controlKey: "knob";       x: device.labelX; y: body.y + device.knobCenterY - height / 2;                      width: device.width - device.labelX }
-            ControlLabel { controlKey: "knob_left";  x: device.labelX; y: body.y + device.knobCenterY + device.knobRowStep - height / 2; width: device.width - device.labelX }
+            ControlLabel { controlKey: "knob_turn"; x: device.labelX; y: body.y + device.knobCenterY - device.knobRowStep - height / 2; width: device.width - device.labelX }
+            ControlLabel { controlKey: "knob";      x: device.labelX; y: body.y + device.knobCenterY + device.knobRowStep - height / 2; width: device.width - device.labelX }
             ControlLabel { controlKey: "key1"; x: device.labelX; y: body.y + device.keyCenterY(0) - height / 2; width: device.width - device.labelX }
             ControlLabel { controlKey: "key2"; x: device.labelX; y: body.y + device.keyCenterY(1) - height / 2; width: device.width - device.labelX }
             ControlLabel { controlKey: "key3"; x: device.labelX; y: body.y + device.keyCenterY(2) - height / 2; width: device.width - device.labelX }
-
           }
 
           Text {
             width: parent.width
-            visible: root.connected && !(root.state && root.state.last)
+            visible: root.connected
             textFormat: Text.PlainText
-            text: "Press a key or turn the knob on the Vibekey and it lights up here. Click a control to change what it does."
+            text: "Preview: while this panel is open the Vibekey only lights up what you press. Click a control to change what it does."
             color: root.faint
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -773,8 +876,74 @@ Panel {
               }
             }
 
+            Text {
+              width: parent.width
+              visible: root.learned !== ""
+              textFormat: Text.PlainText
+              text: root.learned
+              color: root.accent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            Text {
+              width: parent.width
+              visible: ["key1", "key2", "key3", "knob"].indexOf(root.editing) !== -1 && root.learned === ""
+              textFormat: Text.PlainText
+              text: "Press this control on the Vibekey now if it does not light up on its own: it will be learned."
+              color: root.faint
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            // A control the firmware sends under its own code: say which key it is.
+            Row {
+              width: parent.width
+              visible: root.editingExtra
+              spacing: Style.space(10)
+
+              Dropdown {
+                id: slotPicker
+                width: parent.width - forgetButton.width - parent.spacing
+                label: "This is the"
+                showLabel: false
+                fontFamily: root.fontFamily
+                options: Model.slotOptions()
+                value: root.editingExtra ? Model.aliasOf(root.config, root.editing) : "none"
+                onChanged: function(value) { root.setAlias(root.editing, value) }
+              }
+
+              Button {
+                id: forgetButton
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Forget"
+                tooltipText: "Drop it from this list"
+                bordered: true
+                foreground: root.foreground
+                accent: root.accent
+                fontFamily: root.fontFamily
+                onClicked: root.forgetControl(root.editing)
+              }
+            }
+
+            // The knob turn: pick what turning does; both directions follow.
             SearchableDropdown {
               width: parent.width
+              visible: root.editing === "knob_turn"
+              label: "Turning the knob"
+              showLabel: false
+              placeholderText: "Search…"
+              fontFamily: root.fontFamily
+              options: root.knobTurnOptions
+              value: root.knobTurnMode
+              onChanged: function(value) { root.saveKnobTurn(value) }
+            }
+
+            SearchableDropdown {
+              width: parent.width
+              visible: root.editing !== "" && root.editing !== "knob_turn"
               label: "Action"
               showLabel: false
               placeholderText: "Search actions…"
@@ -870,7 +1039,8 @@ Panel {
             width: parent.width
             textFormat: Text.PlainText
             text: root.state && root.state.last && root.state.last.label
-              ? "Last: " + root.state.last.label + (root.state.last.action ? "  →  " + root.state.last.action : "  (nothing assigned)")
+              ? "Last: " + root.state.last.label
+                + (root.state.last.preview ? "  (preview, not run)" : (root.state.last.action ? "  →  " + root.state.last.action : "  (nothing assigned)"))
               : ""
             visible: text !== ""
             color: root.muted

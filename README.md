@@ -34,12 +34,18 @@ into `~/.config/omarchy/plugins/`, enables it and installs the rule.
 ## Using it
 
 - Open the panel from the bar icon. It draws the keypad with each control's
-  assignment beside it. Press a key or turn the knob on the Vibekey and that
-  control lights up in the drawing, so you always know which one you are editing.
-- Click a control (on the drawing or its label) to pick an action: dictation (push-to-talk via voxtype), Omarchy
-  menus and panels, volume and media, screenshots, workspaces, or a plain key
-  press such as Enter and Escape. **Custom command** runs anything through bash;
-  **Send key combo** types a shortcut such as `ctrl+shift+t`.
+  assignment beside it. While the panel is open the keypad is in **preview**:
+  pressing a key or turning the knob only lights that control up in the drawing,
+  nothing runs, and the drawn knob turns with the real one.
+- Click a control (on the drawing or its label) to change it. Keys and the knob
+  press take an action: dictation (push-to-talk via voxtype), Omarchy menus and
+  panels, volume and media, screenshots, workspaces, a plain key press such as
+  Enter, a **custom command** through bash, or a **key combo** such as
+  `ctrl+shift+t`.
+- **Turn knob** is one setting for both directions. The first choice, *Scroll*,
+  lets the knob's own mouse-wheel reports through, so it scrolls like a wheel.
+  The others pair the directions: volume, brightness, workspaces, agents in
+  herdr, windows, tabs, arrows, media tracks, zoom, undo and redo.
 - Changes apply immediately. The daemon picks the config up within a second.
 - **Block the factory keystrokes** is on by default. Turn it off if you also want
   the keypad's own Enter/Escape to reach your apps.
@@ -47,6 +53,14 @@ into `~/.config/omarchy/plugins/`, enables it and installs the rule.
 Push-to-talk works because the daemon sees key releases too: a preset may carry a
 `release_command`, and the Voice key runs `voxtype record start` on press and
 `voxtype record stop` on release.
+
+### A keypad remapped with Ulanzi Studio
+
+The six controls are recognised by what they send from the factory. If you have
+changed a key in Ulanzi Studio, it shows up under **Also seen** with its raw code.
+Click the key you mean in the drawing and press it on the keypad: it is learned
+and from then on counts as that key. Or open the raw entry and pick which key it
+is. Learned mappings are `aliases` in the config file.
 
 ## Flipping between agents in herdr
 
@@ -69,8 +83,10 @@ between herdr workspaces instead; with no herdr open it just says so.
   following the protocol documented by [MrCroxx/olanzi](https://github.com/MrCroxx/olanzi).
 - The six controls are identified by what they send from the factory: Voice
   key = HID usage `0x01`, ✓ = Enter, ✕ = Escape, knob press = PrintScreen, knob
-  turn = Right/Backspace or mouse wheel. A key remapped with Ulanzi Studio shows up
-  as a new row with its raw id, which you can assign like any other.
+  turn = mouse wheel (or Right/Backspace on some firmware). Anything else is a raw
+  id you can learn as one of the six, or assign on its own.
+- While the panel is open it heartbeats `$XDG_RUNTIME_DIR/vibekey/preview`; the
+  daemon then reports controls without running them and holds the wheel back.
 - Assignments live in `~/.config/omarchy/vibekey/config.json`:
 
   ```json

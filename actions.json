@@ -296,5 +296,139 @@
       "description": "omarchy system lock",
       "command": "omarchy system lock"
     }
+  ],
+  "knob_turn": [
+    {
+      "id": "scroll",
+      "label": "Scroll",
+      "description": "Right scrolls down, left scrolls up, like a mouse wheel",
+      "right": {
+        "scroll": "down"
+      },
+      "left": {
+        "scroll": "up"
+      }
+    },
+    {
+      "id": "volume",
+      "label": "Volume",
+      "description": "Right louder, left quieter",
+      "right": {
+        "command": "omarchy-audio-output-volume raise"
+      },
+      "left": {
+        "command": "omarchy-audio-output-volume lower"
+      }
+    },
+    {
+      "id": "brightness",
+      "label": "Screen brightness",
+      "description": "Right brighter, left dimmer",
+      "right": {
+        "command": "omarchy-brightness-display +5%"
+      },
+      "left": {
+        "command": "omarchy-brightness-display 5%-"
+      }
+    },
+    {
+      "id": "workspaces",
+      "label": "Workspaces",
+      "description": "Right next workspace, left previous",
+      "right": {
+        "command": "hyprctl dispatch workspace m+1"
+      },
+      "left": {
+        "command": "hyprctl dispatch workspace m-1"
+      }
+    },
+    {
+      "id": "herdr_agents",
+      "label": "Agents in herdr",
+      "description": "Flip between coding agents in your open herdr",
+      "right": {
+        "command": "\"$HOME/.config/omarchy/plugins/jimmibram.vibekey/bin/vibekey-herdr-agent\" next"
+      },
+      "left": {
+        "command": "\"$HOME/.config/omarchy/plugins/jimmibram.vibekey/bin/vibekey-herdr-agent\" prev"
+      }
+    },
+    {
+      "id": "windows",
+      "label": "Windows",
+      "description": "Cycle through the windows on this workspace",
+      "right": {
+        "command": "hyprctl dispatch cyclenext"
+      },
+      "left": {
+        "command": "hyprctl dispatch cyclenext prev"
+      }
+    },
+    {
+      "id": "tabs",
+      "label": "Browser or editor tabs",
+      "description": "Ctrl+Tab and Ctrl+Shift+Tab",
+      "right": {
+        "keys": "ctrl+Tab"
+      },
+      "left": {
+        "keys": "ctrl+shift+Tab"
+      }
+    },
+    {
+      "id": "arrows_updown",
+      "label": "Up and down arrows",
+      "description": "Move through lists and menus",
+      "right": {
+        "keys": "Down"
+      },
+      "left": {
+        "keys": "Up"
+      }
+    },
+    {
+      "id": "arrows_leftright",
+      "label": "Left and right arrows",
+      "description": "Move the cursor sideways",
+      "right": {
+        "keys": "Right"
+      },
+      "left": {
+        "keys": "Left"
+      }
+    },
+    {
+      "id": "media",
+      "label": "Media tracks",
+      "description": "Right next track, left previous",
+      "right": {
+        "command": "omarchy-shell media next"
+      },
+      "left": {
+        "command": "omarchy-shell media previous"
+      }
+    },
+    {
+      "id": "zoom",
+      "label": "Zoom",
+      "description": "Ctrl+Plus and Ctrl+Minus",
+      "right": {
+        "keys": "ctrl+plus"
+      },
+      "left": {
+        "keys": "ctrl+minus"
+      }
+    },
+    {
+      "id": "undo_redo",
+      "label": "Undo and redo",
+      "description": "Left undoes, right redoes",
+      "right": {
+        "keys": "ctrl+shift+z"
+      },
+      "left": {
+        "keys": "ctrl+z"
+      }
+    }
   ]
 }

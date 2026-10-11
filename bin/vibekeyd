@@ -50,6 +50,8 @@ EVIOCGRAB = 0x40044590
 INPUT_EVENT_SIZE = struct.calcsize("llHHi")
 
 BATTERY_INTERVAL = 60.0
+PREVIEW_PATH = os.path.join(RUNTIME_DIR, "preview")   # the panel heartbeats "open" here while shown
+PREVIEW_MAX_AGE = 6.0
 RESCAN_INTERVAL = 0.7  # the dongle reboots every ~4 s until something holds it open
 CONFIG_POLL = 0.5
 
@@ -240,6 +242,25 @@ class Config:
     def battery(self):
         return self.data.get("battery", True) is not False
 
+    def slot_for(self, raw_id):
+        aliases = self.data.get("aliases")
+        if isinstance(aliases, dict):
+            slot = aliases.get(raw_id)
+            if isinstance(slot, str) and slot in SLOT_LABELS:
+                return slot
+        return DEFAULT_SLOTS.get(raw_id)
+
+    def scroll_knob(self):
+        """True when turning the knob should scroll: its wheel reports pass through."""
+        buttons = self.data.get("buttons")
+        if not isinstance(buttons, dict):
+            return False
+        for key in ("knob_right", "knob_left"):
+            entry = buttons.get(key)
+            if isinstance(entry, dict) and entry.get("scroll"):
+                return True
+        return False
+
     def button(self, raw_id, slot):
         buttons = self.data.get("buttons")
         if not isinstance(buttons, dict):
@@ -284,6 +305,8 @@ class State:
             "connected": False,
             "access": "absent",
             "grabbed": False,
+            "mouse_passthrough": False,
+            "preview": False,
             "device": None,
             "battery": None,
             "last": None,
@@ -370,6 +393,10 @@ def run_action(entry, phase):
         return None
     if phase == "press":
         command, keys = entry.get("command"), entry.get("keys")
+        if entry.get("scroll"):
+            # Native: the knob's own wheel reports reach the compositor because
+            # the daemon leaves the mouse node ungrabbed while scroll is chosen.
+            return "scroll"
     else:
         command, keys = entry.get("release_command"), entry.get("release_keys")
     if isinstance(command, str) and command.strip():
@@ -455,7 +482,9 @@ class Vibekey:
         self.hid_fd = None      # interface 2: standard HID reports
         self.vendor_fd = None   # interface 3: TEA channel
         self.event_fds = []     # grabbed evdev nodes
+        self.mouse_fd = None    # the node carrying the knob's wheel reports
         self.grabbed = False
+        self.mouse_passthrough = False
         self.names = []
         self.keys_down = {}     # usage -> modifier names at press time
         self.mods_down = ""     # modifier-only chord currently held
@@ -496,19 +525,23 @@ class Vibekey:
                 log("open", path, error)
                 continue
             self.event_fds.append(fd)
+            if "mouse" in name.lower():
+                self.mouse_fd = fd
         self.set_grab(grab)
         return "ok"
 
-    def set_grab(self, grab):
+    def set_grab(self, grab, mouse_passthrough=False):
         ok = True
         for fd in self.event_fds:
+            want = grab and not (mouse_passthrough and fd == self.mouse_fd)
             try:
-                fcntl.ioctl(fd, EVIOCGRAB, 1 if grab else 0)
+                fcntl.ioctl(fd, EVIOCGRAB, 1 if want else 0)
             except OSError as error:
-                if grab and error.errno != errno.EINVAL:
+                if want and error.errno not in (errno.EINVAL, errno.EBUSY):
                     ok = False
                     log("grab failed:", error)
         self.grabbed = bool(grab and ok and self.event_fds)
+        self.mouse_passthrough = bool(grab and mouse_passthrough and self.mouse_fd is not None)
 
     def close(self):
         for fd in [self.hid_fd, self.vendor_fd] + self.event_fds:
@@ -520,7 +553,9 @@ class Vibekey:
                 pass
         self.hid_fd = self.vendor_fd = None
         self.event_fds = []
+        self.mouse_fd = None
         self.grabbed = False
+        self.mouse_passthrough = False
         self.keys_down = {}
         self.mods_down = ""
         self.mods_fired = False
@@ -643,7 +678,7 @@ class Vibekey:
         self.mouse_buttons = buttons
         wheel = struct.unpack("b", report[4:5])[0] if len(report) > 4 else 0
         for _ in range(abs(wheel)):
-            raw_id, label = ("wheel:cw", "Wheel down") if wheel > 0 else ("wheel:ccw", "Wheel up")
+            raw_id, label = ("wheel:cw", "Wheel up") if wheel > 0 else ("wheel:ccw", "Wheel down")
             yield raw_id, label, "press"
             yield raw_id, label, "release"
         pan = struct.unpack("b", report[5:6])[0] if len(report) > 5 else 0
@@ -686,8 +721,20 @@ class Daemon:
     def want_grab(self):
         return self.allow_grab and self.config.grab
 
+    @staticmethod
+    def preview_active():
+        """True while the control panel is open: show what a control does, do not do it."""
+        try:
+            info = os.stat(PREVIEW_PATH)
+            if time.time() - info.st_mtime > PREVIEW_MAX_AGE:
+                return False
+            with open(PREVIEW_PATH, "r", encoding="utf-8") as handle:
+                return handle.read(16).strip() == "open"
+        except OSError:
+            return False
+
     def connect(self):
-        access = self.device.open(self.want_grab())
+        access = self.device.open(self.want_grab())  # sync_grab() refines the mouse node below
         if access != "ok":
             self.device.close()
             self.state.set(connected=False, access=access, grabbed=False, device=None,
@@ -695,6 +742,7 @@ class Daemon:
             return False
         log("connected:", ", ".join(self.device.names) or "hidraw only",
             "(grabbed)" if self.device.grabbed else "(not grabbed)")
+        self.sync_grab()
         self.state.set(connected=True, access="ok", grabbed=self.device.grabbed, error="",
                        device={"name": PRODUCT_NAME, "inputs": self.device.names,
                                "vendor_channel": self.device.vendor_fd is not None})
@@ -709,18 +757,19 @@ class Daemon:
         self.next_rescan = time.monotonic() + RESCAN_INTERVAL
 
     def handle_control(self, raw_id, label, phase):
-        slot = DEFAULT_SLOTS.get(raw_id)
+        slot = self.config.slot_for(raw_id)
         entry = self.config.button(raw_id, slot)
-        action = run_action(entry, phase)
+        preview = self.preview_active()
+        action = None if preview else run_action(entry, phase)
         if self.probe:
             print("%s %-14s %-24s slot=%-10s action=%s" % (time.strftime("%H:%M:%S"), raw_id, label, slot or "-", action or "-"), flush=True)
         if phase != "press":
             return
         self.events += 1
         self.seen.note(raw_id, slot, label)
-        self.state.set(events=self.events, last={
+        self.state.set(events=self.events, preview=preview, last={
             "id": raw_id, "slot": slot, "label": SLOT_LABELS.get(slot, label),
-            "at": time.time(), "action": action or "",
+            "at": time.time(), "action": action or "", "preview": preview,
         })
 
     def handle_vendor(self, plain):
@@ -744,10 +793,22 @@ class Daemon:
         self.next_battery = now + BATTERY_INTERVAL
         self.device.request_battery()
 
+    def want_mouse_passthrough(self):
+        return self.config.scroll_knob() and not self.preview_active()
+
+    def sync_grab(self):
+        """Grab state follows the config and the panel: with the knob on scroll
+        its wheel reports pass through, except while the panel previews."""
+        grab = self.want_grab()
+        passthrough = grab and self.want_mouse_passthrough()
+        if self.device.grabbed == grab and self.device.mouse_passthrough == passthrough:
+            return
+        self.device.set_grab(grab, passthrough)
+        self.state.set(grabbed=self.device.grabbed, mouse_passthrough=self.device.mouse_passthrough)
+
     def apply_config_change(self):
-        if self.device.connected and self.device.grabbed != self.want_grab():
-            self.device.set_grab(self.want_grab())
-            self.state.set(grabbed=self.device.grabbed)
+        if self.device.connected:
+            self.sync_grab()
 
     def run(self):
         log("config:", CONFIG_PATH)
@@ -758,6 +819,8 @@ class Daemon:
                 self.next_config = now + CONFIG_POLL
                 if self.config.reload():
                     self.apply_config_change()
+            if self.device.connected:
+                self.sync_grab()
             if not self.device.connected:
                 if now >= self.next_rescan:
                     self.next_rescan = now + RESCAN_INTERVAL

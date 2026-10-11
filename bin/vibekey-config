@@ -5,6 +5,8 @@ Usage:
   vibekey-config show
   vibekey-config set-button <control> <json-object | null>
   vibekey-config set <key> <json-value>
+  vibekey-config alias <raw-id> <slot | null>     say which physical control a raw id is
+  vibekey-config forget <raw-id>                  drop a raw id from seen.json
 
 <control> is a slot name (key1, key2, key3, knob, knob_right, knob_left) or a
 raw control id the daemon reported (kbd:0x68, con:0x00e9, wheel:cw, ...).
@@ -18,8 +20,10 @@ import sys
 
 CONFIG_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "omarchy", "vibekey")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
+SEEN_PATH = os.path.join(CONFIG_DIR, "seen.json")
+SLOTS = ("key1", "key2", "key3", "knob", "knob_right", "knob_left")
 
-ALLOWED_BUTTON_KEYS = {"label", "command", "keys", "release_command", "release_keys", "preset"}
+ALLOWED_BUTTON_KEYS = {"label", "command", "keys", "release_command", "release_keys", "preset", "scroll"}
 
 
 def load():
@@ -36,6 +40,8 @@ def load():
         data["buttons"] = {}
     data.setdefault("grab", True)
     data.setdefault("battery", True)
+    if not isinstance(data.get("aliases"), dict):
+        data["aliases"] = {}
     return data
 
 
@@ -80,6 +86,30 @@ def main(argv):
         else:
             sys.exit("vibekey-config: button value must be a JSON object or null")
         save(data)
+        return 0
+    if command == "alias" and len(argv) == 3:
+        raw_id, slot = argv[1].strip(), argv[2].strip()
+        if slot in ("null", "none", ""):
+            data["aliases"].pop(raw_id, None)
+        elif slot in SLOTS:
+            data["aliases"][raw_id] = slot
+        else:
+            sys.exit("vibekey-config: slot must be one of " + ", ".join(SLOTS))
+        save(data)
+        return 0
+    if command == "forget" and len(argv) == 2:
+        try:
+            with open(SEEN_PATH, "r", encoding="utf-8") as handle:
+                seen = json.load(handle)
+        except (OSError, ValueError):
+            return 0
+        if isinstance(seen, dict) and isinstance(seen.get("controls"), dict):
+            seen["controls"].pop(argv[1].strip(), None)
+            tmp = SEEN_PATH + ".tmp.%d" % os.getpid()
+            with open(tmp, "w", encoding="utf-8") as handle:
+                json.dump(seen, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+            os.replace(tmp, SEEN_PATH)
         return 0
     if command == "set" and len(argv) == 3:
         key = argv[1].strip()

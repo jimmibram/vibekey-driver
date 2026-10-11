@@ -44,9 +44,58 @@ function summary(entry, presets) {
   var preset = presetById(presets, entry.preset)
   if (preset && preset.label) return preset.label
   if (entry.label) return String(entry.label)
+  if (entry.scroll) return "Scroll " + entry.scroll
   if (entry.command) return String(entry.command)
   if (entry.keys) return "Keys " + entry.keys
   return "Not assigned"
+}
+
+// ---- The knob turn is one setting: a mode that assigns both directions. ----
+
+function knobTurnOptions(knobPresets) {
+  var options = [{ value: "none", label: "Nothing", description: "Turning the knob does nothing" }]
+  if (Array.isArray(knobPresets)) {
+    for (var i = 0; i < knobPresets.length; i++) {
+      var preset = knobPresets[i]
+      if (!preset || !preset.id) continue
+      options.push({ value: String(preset.id), label: String(preset.label || preset.id), description: String(preset.description || "") })
+    }
+  }
+  return options
+}
+
+// The mode id the current knob_right/knob_left entries came from, "none" when
+// both are empty, or "custom" when they were set some other way.
+function knobTurnMode(config, knobPresets) {
+  var assigned = buttons(config)
+  var right = assigned.knob_right, left = assigned.knob_left
+  if (!isObject(right) && !isObject(left)) return "none"
+  var tag = isObject(right) && right.preset ? String(right.preset) : (isObject(left) && left.preset ? String(left.preset) : "")
+  if (tag.indexOf("knob:") === 0 && presetById(knobPresets, tag.slice(5))) return tag.slice(5)
+  return "custom"
+}
+
+function knobTurnSummary(config, knobPresets, presets) {
+  var mode = knobTurnMode(config, knobPresets)
+  if (mode === "none") return "Not assigned"
+  var preset = presetById(knobPresets, mode)
+  if (preset) return String(preset.label)
+  var assigned = buttons(config)
+  return "\u2192 " + summary(assigned.knob_right, presets) + "  \u2190 " + summary(assigned.knob_left, presets)
+}
+
+// The two config entries a knob mode stands for, fields copied so the daemon
+// never needs the catalogue.
+function entriesForKnobPreset(preset) {
+  if (!isObject(preset)) return null
+  function entry(side) {
+    var out = { preset: "knob:" + String(preset.id || ""), label: String(preset.label || "") }
+    var fields = ["command", "keys", "scroll", "release_command", "release_keys"]
+    var source = isObject(preset[side]) ? preset[side] : {}
+    for (var i = 0; i < fields.length; i++) if (source[fields[i]]) out[fields[i]] = String(source[fields[i]])
+    return out
+  }
+  return { right: entry("right"), left: entry("left") }
 }
 
 // The editor's dropdown value for an assignment.
@@ -77,10 +126,12 @@ function controls(config, seen, presets) {
       extra: false
     })
   }
+  var aliases = isObject(config) && isObject(config.aliases) ? config.aliases : {}
   var extras = []
   for (var id in seenControls) {
     var info = seenControls[id]
     if (!isObject(info) || covered[id]) continue
+    if (aliases[id] && covered[aliases[id]]) continue
     if (info.slot && covered[info.slot]) continue
     extras.push({ key: id, label: String(info.label || id), last: Number(info.last || 0) })
   }
@@ -147,6 +198,23 @@ function editorOptions(presets) {
   options.push({ value: "keys", label: "Send key combo…", description: "Type a shortcut such as ctrl+shift+t" })
   return options
 }
+
+// Which physical control a raw id stands for, for the "Also seen" editor.
+function slotOptions() {
+  var options = [{ value: "none", label: "Not one of the six", description: "Keep it as its own control" }]
+  for (var i = 0; i < SLOTS.length; i++) {
+    options.push({ value: SLOTS[i].key, label: SLOTS[i].label, description: SLOTS[i].hint })
+  }
+  return options
+}
+
+function aliasOf(config, rawId) {
+  var aliases = isObject(config) && isObject(config.aliases) ? config.aliases : {}
+  return aliases[rawId] ? String(aliases[rawId]) : "none"
+}
+
+// Raw ids the factory firmware sends; learning never re-maps those.
+var FACTORY_IDS = { "kbd:0x01": 1, "kbd:0x28": 1, "kbd:0x29": 1, "kbd:0x46": 1, "kbd:0x4f": 1, "kbd:0x2a": 1, "wheel:cw": 1, "wheel:ccw": 1 }
 
 function statusText(state, daemonRunning) {
   if (!isObject(state)) return daemonRunning ? "Starting driver…" : "Driver not running"
