@@ -33,9 +33,10 @@ into `~/.config/omarchy/plugins/`, enables it and installs the rule.
 
 ## Using it
 
-- Open the panel from the bar icon. Press a key or turn the knob on the Vibekey
-  and its row lights up, so you always know which control you are editing.
-- Click a row to pick an action: dictation (push-to-talk via voxtype), Omarchy
+- Open the panel from the bar icon. It draws the keypad with each control's
+  assignment beside it. Press a key or turn the knob on the Vibekey and that
+  control lights up in the drawing, so you always know which one you are editing.
+- Click a control (on the drawing or its label) to pick an action: dictation (push-to-talk via voxtype), Omarchy
   menus and panels, volume and media, screenshots, workspaces, or a plain key
   press such as Enter and Escape. **Custom command** runs anything through bash;
   **Send key combo** types a shortcut such as `ctrl+shift+t`.
