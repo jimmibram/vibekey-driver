@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""vibekey-herdr-agent: flip between the coding agents in your open herdr.
+
+Usage: vibekey-herdr-agent [next|prev] [--no-window-focus] [--dry-run]
+
+Finds the herdr TUI you have open (local, `--session`, `--machine` or
+`--remote <host>`), asks that session for its agents over the herdr socket
+API (through SSH for a --remote session), focuses the next or previous one,
+and brings the herdr window to the front. With no agents it flips between
+workspaces instead. Shows a small OSD with the agent it landed on.
+"""
+
+import json
+import os
+import shlex
+import subprocess
+import sys
+
+SKIP_SUBCOMMANDS = {
+    "server", "client", "remote-client-bridge", "api", "agent", "pane", "tab",
+    "workspace", "worktree", "session", "machine", "config", "channel", "status",
+    "update", "completion", "notification", "integration", "--help", "-h", "--version",
+}
+
+
+def run(argv, timeout=15):
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return None, str(error)
+    if done.returncode != 0:
+        return None, (done.stderr or done.stdout).strip()
+    return done.stdout, ""
+
+
+def osd(message):
+    try:
+        subprocess.Popen(["omarchy-osd", "-i", "terminal", "-m", message],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
+def proc_cmdline(pid):
+    try:
+        with open("/proc/%d/cmdline" % pid, "rb") as handle:
+            return [p.decode("utf-8", "replace") for p in handle.read().split(b"\0") if p]
+    except OSError:
+        return []
+
+
+def proc_ppid(pid):
+    try:
+        with open("/proc/%d/stat" % pid, "r") as handle:
+            stat = handle.read()
+        return int(stat[stat.rindex(")") + 2:].split()[1])
+    except (OSError, ValueError, IndexError):
+        return 0
+
+
+def hypr_clients():
+    out, _ = run(["hyprctl", "clients", "-j"])
+    try:
+        return {c["pid"]: c for c in json.loads(out or "[]")}
+    except (ValueError, KeyError, TypeError):
+        return {}
+
+
+def hypr_active_pid():
+    out, _ = run(["hyprctl", "activewindow", "-j"])
+    try:
+        return json.loads(out or "{}").get("pid")
+    except ValueError:
+        return None
+
+
+def herdr_sessions(clients):
+    """Every herdr TUI you have open: how to reach its session, and its window."""
+    found = []
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        argv = proc_cmdline(pid)
+        if not argv or os.path.basename(argv[0]) != "herdr":
+            continue
+        args = argv[1:]
+        if args and not args[0].startswith("--") and args[0] in SKIP_SUBCOMMANDS:
+            if args[0] != "session" or (len(args) > 1 and args[1] != "attach"):
+                continue
+        if "remote-client-bridge" in args:
+            continue
+        session = {"pid": pid, "remote": "", "prefix": []}
+        for i, arg in enumerate(args):
+            if arg == "--remote" and i + 1 < len(args):
+                session["remote"] = args[i + 1]
+            elif arg in ("--session", "--machine") and i + 1 < len(args):
+                session["prefix"] += [arg, args[i + 1]]
+        # Walk up to the terminal window that shows this TUI.
+        window = None
+        cursor = pid
+        for _ in range(12):
+            if cursor in clients:
+                window = clients[cursor]
+                break
+            cursor = proc_ppid(cursor)
+            if cursor <= 1:
+                break
+        session["window"] = window
+        found.append(session)
+    return found
+
+
+def pick_session(sessions, active_pid):
+    for session in sessions:
+        if session["window"] and session["window"].get("pid") == active_pid:
+            return session
+    with_window = [s for s in sessions if s["window"]]
+    if with_window:
+        with_window.sort(key=lambda s: s["window"].get("focusHistoryID", 1 << 30))
+        return with_window[0]
+    return sessions[0] if sessions else None
+
+
+def herdr_cli(session, args):
+    """Run a herdr API command against the session, locally or over SSH."""
+    if session["remote"]:
+        remote = 'h=$(command -v herdr || echo "$HOME/.local/bin/herdr"); exec "$h" ' + " ".join(shlex.quote(a) for a in args)
+        return run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", session["remote"], remote], timeout=20)
+    return run(["herdr"] + session["prefix"] + args)
+
+
+def snapshot(session):
+    out, error = herdr_cli(session, ["api", "snapshot"])
+    if out is None:
+        return None, error
+    try:
+        return json.loads(out)["result"]["snapshot"], ""
+    except (ValueError, KeyError, TypeError):
+        return None, "unexpected snapshot: " + out[:120]
+
+
+def workspace_number(snap, workspace_id):
+    for ws in snap.get("workspaces", []):
+        if ws.get("workspace_id") == workspace_id:
+            return ws.get("number", 0)
+    return 0
+
+
+def workspace_label(snap, workspace_id):
+    for ws in snap.get("workspaces", []):
+        if ws.get("workspace_id") == workspace_id:
+            return str(ws.get("label") or workspace_id)
+    return str(workspace_id)
+
+
+def pane_workspace(snap, pane_id):
+    for pane in snap.get("panes", []):
+        if pane.get("pane_id") == pane_id:
+            return pane.get("workspace_id", "")
+    return str(pane_id).split(":")[0]
+
+
+def choose_target(snap, direction):
+    """Returns (kind, id, label): the agent (or workspace) to focus."""
+    agents = list(snap.get("agents", []))
+    if agents:
+        for agent in agents:
+            agent["_ws"] = agent.get("workspace_id") or pane_workspace(snap, agent.get("pane_id"))
+        agents.sort(key=lambda a: (workspace_number(snap, a["_ws"]), str(a.get("pane_id"))))
+        current = -1
+        for i, agent in enumerate(agents):
+            if agent.get("focused") or agent.get("pane_id") == snap.get("focused_pane_id"):
+                current = i
+                break
+        if current == -1:
+            index = 0
+        else:
+            index = (current + (1 if direction == "next" else -1)) % len(agents)
+        target = agents[index]
+        label = str(target.get("name") or target.get("agent") or "agent")
+        return "agent", str(target.get("pane_id")), label + " · " + workspace_label(snap, target["_ws"])
+    workspaces = sorted(snap.get("workspaces", []), key=lambda w: w.get("number", 0))
+    if not workspaces:
+        return None, None, "Nothing to switch to"
+    current = -1
+    for i, ws in enumerate(workspaces):
+        if ws.get("focused") or ws.get("workspace_id") == snap.get("focused_workspace_id"):
+            current = i
+            break
+    index = 0 if current == -1 else (current + (1 if direction == "next" else -1)) % len(workspaces)
+    target = workspaces[index]
+    return "workspace", str(target.get("workspace_id")), "Workspace " + str(target.get("label") or "")
+
+
+def main(argv):
+    direction = "prev" if "prev" in argv else "next"
+    focus_window = "--no-window-focus" not in argv
+    dry_run = "--dry-run" in argv
+    if "-h" in argv or "--help" in argv:
+        print(__doc__.strip())
+        return 0
+
+    clients = hypr_clients()
+    sessions = herdr_sessions(clients)
+    session = pick_session(sessions, hypr_active_pid())
+    if not session:
+        osd("Herdr is not open")
+        print("no herdr TUI found", file=sys.stderr)
+        return 0
+
+    snap, error = snapshot(session)
+    if snap is None:
+        osd("Herdr: " + (error.splitlines()[0] if error else "no answer"))
+        print("snapshot failed:", error, file=sys.stderr)
+        return 1
+
+    kind, target, label = choose_target(snap, direction)
+    where = session["remote"] or " ".join(session["prefix"]) or "local"
+    if dry_run:
+        print("session:", where, "window:", session["window"] and session["window"].get("title"))
+        print("would focus", kind, target, "->", label)
+        return 0
+    if kind:
+        out, error = herdr_cli(session, [kind, "focus", target])
+        if out is None:
+            osd("Herdr: " + (error.splitlines()[0] if error else "focus failed"))
+            print("focus failed:", error, file=sys.stderr)
+            return 1
+    if focus_window and session["window"] and session["window"].get("address"):
+        run(["hyprctl", "dispatch", "focuswindow", "address:" + session["window"]["address"]])
+    osd(label)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

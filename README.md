@@ -47,6 +47,16 @@ Push-to-talk works because the daemon sees key releases too: a preset may carry 
 `release_command`, and the Voice key runs `voxtype record start` on press and
 `voxtype record stop` on release.
 
+## Flipping between agents in herdr
+
+The presets **Next agent in herdr** and **Previous agent in herdr** run
+`bin/vibekey-herdr-agent`. It finds the herdr TUI you have open (a local session,
+`herdr --session`, `herdr --machine`, or `herdr --remote <host>`), asks that
+session for its agents over the herdr socket API (through SSH for a remote
+session), focuses the next or previous one, brings the herdr window to the
+front and shows the agent's name in the OSD. With no agents running it flips
+between herdr workspaces instead; with no herdr open it just says so.
+
 ## How it works
 
 - `bin/vibekeyd` is a dependency-free Python daemon the panel starts and
