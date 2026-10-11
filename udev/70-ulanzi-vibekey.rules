@@ -1,0 +1,6 @@
+# Ulanzi Vibekey (USB fff1:00dd, "AU05"). Give the logged-in user access to the
+# device's input event nodes and raw HID channels, so the Omarchy Vibekey plugin
+# can read its keys without root. uaccess ACLs are applied by 73-seat-late.rules,
+# so this file must sort before it.
+SUBSYSTEM=="input", ATTRS{idVendor}=="fff1", ATTRS{idProduct}=="00dd", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="fff1", ATTRS{idProduct}=="00dd", TAG+="uaccess"

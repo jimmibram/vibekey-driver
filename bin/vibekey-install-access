@@ -1,0 +1,38 @@
+#!/bin/bash
+# Installs the udev rule that lets the logged-in user read the Ulanzi Vibekey.
+# Needs root: re-executes itself through sudo in a terminal, or pkexec (a
+# graphical password prompt) when there is no terminal, e.g. when the Omarchy
+# shell runs it from the Vibekey panel.
+set -euo pipefail
+
+here="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+rule_src="$here/../udev/70-ulanzi-vibekey.rules"
+rule_dst="/etc/udev/rules.d/70-ulanzi-vibekey.rules"
+
+if [[ $EUID -ne 0 ]]; then
+  if [[ -t 0 && -t 1 ]]; then
+    exec sudo -- "$0" "$@"
+  else
+    exec pkexec "$0" "$@"
+  fi
+fi
+
+[[ -f $rule_src ]] || { echo "rule file not found: $rule_src" >&2; exit 1; }
+
+if [[ ${1:-} == --remove ]]; then
+  rm -f "$rule_dst"
+else
+  install -m 0644 "$rule_src" "$rule_dst"
+fi
+
+udevadm control --reload
+# Re-apply rules to the device if it is plugged in right now, so no replug is needed.
+udevadm trigger --subsystem-match=input --attr-match=idVendor=fff1 2>/dev/null || true
+for dev in /sys/bus/usb/devices/*; do
+  [[ -f $dev/idVendor && -f $dev/idProduct ]] || continue
+  if [[ $(<"$dev/idVendor") == fff1 && $(<"$dev/idProduct") == 00dd ]]; then
+    udevadm trigger --parent-match="$dev" --action=add || true
+  fi
+done
+udevadm settle --timeout=5 || true
+echo "ok"

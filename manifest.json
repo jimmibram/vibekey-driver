@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "jimmibram.vibekey",
+  "name": "Vibekey",
+  "version": "0.1.0",
+  "author": "jimmibram",
+  "license": "MIT",
+  "homepage": "https://github.com/jimmibram/vibekey-driver",
+  "description": "Driver and control panel for the Ulanzi Vibekey: assign any Omarchy action to its three keys and knob.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Vibekey",
+    "description": "Ulanzi Vibekey status, battery, and button assignments.",
+    "category": "Hardware",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {},
+    "schema": []
+  }
+}

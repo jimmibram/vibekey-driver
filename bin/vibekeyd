@@ -1,0 +1,840 @@
+#!/usr/bin/env python3
+"""vibekeyd: Ulanzi Vibekey (AU05) driver for the Omarchy Vibekey plugin.
+
+What it does
+  * Finds the Vibekey dongle (USB fff1:00dd) and holds both of its raw HID
+    channels open. The dongle reboots every ~4 s when nothing holds them.
+  * Reads the standard HID reports straight from hidraw, so the Voice key is
+    seen too: it sends the HID "ErrorRollOver" usage (0x01), which the kernel
+    treats as an error state and never turns into a key press.
+  * Grabs the device's evdev nodes (EVIOCGRAB) so its factory keystrokes
+    (Enter, Esc, PrintScreen, arrows, Backspace) no longer reach the
+    compositor. Every control runs the action assigned to it in
+    ~/.config/omarchy/vibekey/config.json instead.
+  * Polls the battery over the vendor channel (TEA-encrypted frames, see
+    MrCroxx/olanzi docs) and publishes everything the panel needs to
+    $XDG_RUNTIME_DIR/vibekey/state.json.
+
+Only the Python standard library is used.
+
+Usage: vibekeyd [--probe] [--no-grab] [--no-battery]
+  --probe       also print every decoded control event to stdout
+  --no-grab     leave the evdev nodes alone (keystrokes reach apps as well)
+  --no-battery  never talk to the vendor channel
+"""
+
+import errno
+import fcntl
+import json
+import os
+import select
+import shlex
+import signal
+import struct
+import subprocess
+import sys
+import time
+
+VENDOR_ID = 0xFFF1
+PRODUCT_ID = 0x00DD
+PRODUCT_NAME = "Ulanzi Vibekey"
+
+CONFIG_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "omarchy", "vibekey")
+CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
+SEEN_PATH = os.path.join(CONFIG_DIR, "seen.json")
+RUNTIME_DIR = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "vibekey")
+STATE_PATH = os.path.join(RUNTIME_DIR, "state.json")
+LOCK_PATH = os.path.join(RUNTIME_DIR, "lock")
+
+EVIOCGRAB = 0x40044590
+INPUT_EVENT_SIZE = struct.calcsize("llHHi")
+
+BATTERY_INTERVAL = 60.0
+RESCAN_INTERVAL = 0.7  # the dongle reboots every ~4 s until something holds it open
+CONFIG_POLL = 0.5
+
+# --------------------------------------------------------------------------
+# HID usage names
+# --------------------------------------------------------------------------
+
+KEYBOARD_USAGES = {0x01: "Voice"}  # ErrorRollOver: what the Voice key sends from the factory
+for _i, _c in enumerate("abcdefghijklmnopqrstuvwxyz"):
+    KEYBOARD_USAGES[0x04 + _i] = _c.upper()
+for _i, _c in enumerate("1234567890"):
+    KEYBOARD_USAGES[0x1E + _i] = _c
+KEYBOARD_USAGES.update({
+    0x28: "Enter", 0x29: "Escape", 0x2A: "Backspace", 0x2B: "Tab", 0x2C: "Space",
+    0x2D: "Minus", 0x2E: "Equal", 0x2F: "LeftBracket", 0x30: "RightBracket",
+    0x31: "Backslash", 0x32: "Hash", 0x33: "Semicolon", 0x34: "Apostrophe",
+    0x35: "Grave", 0x36: "Comma", 0x37: "Period", 0x38: "Slash", 0x39: "CapsLock",
+    0x46: "PrintScreen", 0x47: "ScrollLock", 0x48: "Pause", 0x49: "Insert",
+    0x4A: "Home", 0x4B: "PageUp", 0x4C: "Delete", 0x4D: "End", 0x4E: "PageDown",
+    0x4F: "Right", 0x50: "Left", 0x51: "Down", 0x52: "Up", 0x53: "NumLock",
+    0x54: "KP/", 0x55: "KP*", 0x56: "KP-", 0x57: "KP+", 0x58: "KPEnter",
+    0x62: "KP0", 0x63: "KP.", 0x65: "Menu", 0x66: "Power", 0x74: "Execute",
+    0x75: "Help", 0x76: "Menu", 0x77: "Select", 0x78: "Stop", 0x79: "Again",
+    0x7A: "Undo", 0x7B: "Cut", 0x7C: "Copy", 0x7D: "Paste", 0x7E: "Find",
+    0x7F: "Mute", 0x80: "VolumeUp", 0x81: "VolumeDown",
+})
+for _i in range(12):
+    KEYBOARD_USAGES[0x3A + _i] = "F%d" % (_i + 1)
+    KEYBOARD_USAGES[0x68 + _i] = "F%d" % (_i + 13)
+for _i in range(9):
+    KEYBOARD_USAGES[0x59 + _i] = "KP%d" % (_i + 1)
+
+MODIFIER_BITS = [(0x01, "ctrl"), (0x02, "shift"), (0x04, "alt"), (0x08, "super"),
+                 (0x10, "ctrl"), (0x20, "shift"), (0x40, "alt"), (0x80, "super")]
+
+CONSUMER_USAGES = {
+    0x00B5: "NextTrack", 0x00B6: "PreviousTrack", 0x00B7: "Stop", 0x00B8: "Eject",
+    0x00CD: "PlayPause", 0x00E2: "Mute", 0x00E9: "VolumeUp", 0x00EA: "VolumeDown",
+    0x006F: "BrightnessUp", 0x0070: "BrightnessDown", 0x0183: "MediaPlayer",
+    0x018A: "Mail", 0x0192: "Calculator", 0x0194: "FileBrowser", 0x0221: "Search",
+    0x0223: "Browser", 0x0224: "Back", 0x0225: "Forward", 0x0226: "StopLoading",
+    0x0227: "Refresh", 0x022A: "Bookmarks",
+}
+
+# The six physical controls and the HID usages they send from the factory.
+# Knob rotation has been seen both as arrow keys and as mouse wheel ticks.
+DEFAULT_SLOTS = {
+    "kbd:0x01": "key1",
+    "kbd:0x28": "key2",
+    "kbd:0x29": "key3",
+    "kbd:0x46": "knob",
+    "kbd:0x4f": "knob_right",
+    "wheel:cw": "knob_right",
+    "kbd:0x2a": "knob_left",
+    "wheel:ccw": "knob_left",
+}
+
+SLOT_LABELS = {
+    "key1": "Voice key",
+    "key2": "Confirm key",
+    "key3": "Cancel key",
+    "knob": "Knob press",
+    "knob_right": "Knob right",
+    "knob_left": "Knob left",
+}
+
+SLOT_ORDER = ["key1", "key2", "key3", "knob", "knob_right", "knob_left"]
+
+
+def log(*parts):
+    print("vibekeyd:", *parts, file=sys.stderr, flush=True)
+
+
+# --------------------------------------------------------------------------
+# TEA transport for the vendor channel (interface 3, report 0x55)
+# --------------------------------------------------------------------------
+
+TEA_KEY = struct.unpack("<IIII", bytes.fromhex("cabaa5ca6d8a2abcba9e5acaca8bb89b"))
+TEA_DELTA = 0x9E3779B9
+MASK32 = 0xFFFFFFFF
+
+
+def _tea_encrypt_block(block):
+    v0, v1 = struct.unpack("<II", block)
+    k0, k1, k2, k3 = TEA_KEY
+    total = 0
+    for _ in range(32):
+        total = (total + TEA_DELTA) & MASK32
+        v0 = (v0 + ((((v1 << 4) & MASK32) + k0) ^ ((v1 + total) & MASK32) ^ ((v1 >> 5) + k1))) & MASK32
+        v1 = (v1 + ((((v0 << 4) & MASK32) + k2) ^ ((v0 + total) & MASK32) ^ ((v0 >> 5) + k3))) & MASK32
+    return struct.pack("<II", v0, v1)
+
+
+def _tea_decrypt_block(block):
+    v0, v1 = struct.unpack("<II", block)
+    k0, k1, k2, k3 = TEA_KEY
+    total = (TEA_DELTA * 32) & MASK32
+    for _ in range(32):
+        v1 = (v1 - ((((v0 << 4) & MASK32) + k2) ^ ((v0 + total) & MASK32) ^ ((v0 >> 5) + k3))) & MASK32
+        v0 = (v0 - ((((v1 << 4) & MASK32) + k0) ^ ((v1 + total) & MASK32) ^ ((v1 >> 5) + k1))) & MASK32
+        total = (total - TEA_DELTA) & MASK32
+    return struct.pack("<II", v0, v1)
+
+
+def tea_encrypt(plain64):
+    return b"".join(_tea_encrypt_block(plain64[i:i + 8]) for i in range(0, 64, 8))
+
+
+def tea_decrypt(cipher64):
+    return b"".join(_tea_decrypt_block(cipher64[i:i + 8]) for i in range(0, 64, 8))
+
+
+def vendor_frame(payload):
+    """A 64-byte hidraw write: report ID 0x55 plus the first 63 encrypted bytes."""
+    plain = bytes(payload) + bytes(64 - len(payload))
+    return b"\x55" + tea_encrypt(plain)[:63]
+
+
+def vendor_decode(report):
+    """Decrypt an incoming 0x55 report. The 64th cipher byte never crosses the wire."""
+    data = report[1:] if report[:1] == b"\x55" else report
+    if len(data) < 63:
+        return None
+    return tea_decrypt(bytes(data[:63]) + b"\x00")
+
+
+BATTERY_REQUEST = bytes([0x01, 0x01, 0x02, 0x01])
+
+
+# --------------------------------------------------------------------------
+# Files: config, seen controls, published state
+# --------------------------------------------------------------------------
+
+def read_json(path, fallback):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else fallback
+    except (OSError, ValueError):
+        return fallback
+
+
+def write_json_atomic(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp.%d" % os.getpid()
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(tmp, path)
+
+
+def write_json_inplace(path, data):
+    """One write() into a truncated file. Readers that watch the path keep
+    their watch (no rename), and the payload is small enough that a reader
+    practically never sees it half-written; they retry on a parse error."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    blob = (json.dumps(data, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC, 0o600)
+    try:
+        os.write(fd, blob)
+    finally:
+        os.close(fd)
+
+
+class Config:
+    def __init__(self, path):
+        self.path = path
+        self.mtime = None
+        self.data = {}
+        self.reload(force=True)
+
+    def reload(self, force=False):
+        try:
+            mtime = os.stat(self.path).st_mtime_ns
+        except OSError:
+            mtime = None
+        if not force and mtime == self.mtime:
+            return False
+        self.mtime = mtime
+        self.data = read_json(self.path, {})
+        return True
+
+    @property
+    def grab(self):
+        return self.data.get("grab", True) is not False
+
+    @property
+    def battery(self):
+        return self.data.get("battery", True) is not False
+
+    def button(self, raw_id, slot):
+        buttons = self.data.get("buttons")
+        if not isinstance(buttons, dict):
+            return None
+        entry = buttons.get(raw_id)
+        if not isinstance(entry, dict) and slot:
+            entry = buttons.get(slot)
+        return entry if isinstance(entry, dict) else None
+
+
+class Seen:
+    """Controls the device has ever sent, so the panel can list them."""
+
+    def __init__(self, path):
+        self.path = path
+        self.data = read_json(path, {})
+        if not isinstance(self.data.get("controls"), dict):
+            self.data["controls"] = {}
+
+    def note(self, raw_id, slot, label):
+        controls = self.data["controls"]
+        entry = controls.get(raw_id)
+        if not isinstance(entry, dict):
+            entry = {"count": 0}
+        entry["count"] = int(entry.get("count", 0)) + 1
+        entry["last"] = time.time()
+        entry["slot"] = slot
+        entry["label"] = label
+        controls[raw_id] = entry
+        try:
+            write_json_atomic(self.path, self.data)
+        except OSError as error:
+            log("could not save seen.json:", error)
+
+
+class State:
+    def __init__(self, path):
+        self.path = path
+        self.data = {
+            "version": 1,
+            "pid": os.getpid(),
+            "connected": False,
+            "access": "absent",
+            "grabbed": False,
+            "device": None,
+            "battery": None,
+            "last": None,
+            "events": 0,
+            "error": "",
+            "updated": 0,
+        }
+        self.publish()
+
+    def set(self, **fields):
+        self.data.update(fields)
+        self.publish()
+
+    def publish(self):
+        self.data["updated"] = time.time()
+        try:
+            write_json_inplace(self.path, self.data)
+        except OSError as error:
+            log("could not write state:", error)
+
+
+# --------------------------------------------------------------------------
+# Actions
+# --------------------------------------------------------------------------
+
+WTYPE_MODIFIERS = {
+    "ctrl": "ctrl", "control": "ctrl", "shift": "shift", "alt": "alt",
+    "super": "logo", "meta": "logo", "win": "logo", "logo": "logo", "altgr": "altgr",
+}
+WTYPE_KEYSYMS = {
+    "enter": "Return", "return": "Return", "esc": "Escape", "escape": "Escape",
+    "space": "space", "tab": "Tab", "backspace": "BackSpace", "delete": "Delete",
+    "del": "Delete", "insert": "Insert", "home": "Home", "end": "End",
+    "pageup": "Prior", "pagedown": "Next", "up": "Up", "down": "Down",
+    "left": "Left", "right": "Right", "print": "Print", "menu": "Menu",
+    "plus": "plus", "minus": "minus", "comma": "comma", "period": "period",
+    "slash": "slash", "backslash": "backslash", "semicolon": "semicolon",
+    "apostrophe": "apostrophe", "grave": "grave", "bracketleft": "bracketleft",
+    "bracketright": "bracketright", "equal": "equal",
+}
+
+
+def wtype_argv(combo):
+    """'ctrl+shift+t' -> wtype arguments that press and release that combo."""
+    parts = [p.strip() for p in str(combo).replace(" ", "").split("+") if p.strip()]
+    if not parts:
+        return None
+    key = parts[-1]
+    mods = [WTYPE_MODIFIERS.get(p.lower()) for p in parts[:-1]]
+    if any(m is None for m in mods):
+        return None
+    lowered = key.lower()
+    if lowered in WTYPE_KEYSYMS:
+        keysym = WTYPE_KEYSYMS[lowered]
+    elif len(lowered) >= 2 and lowered[0] == "f" and lowered[1:].isdigit():
+        keysym = "F" + lowered[1:]
+    else:
+        keysym = key
+    argv = ["wtype"]
+    for mod in mods:
+        argv += ["-M", mod]
+    argv += ["-k", keysym]
+    for mod in reversed(mods):
+        argv += ["-m", mod]
+    return argv
+
+
+def spawn(argv, shell=False):
+    try:
+        subprocess.Popen(
+            ["bash", "-c", argv] if shell else argv,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True, close_fds=True,
+        )
+        return True
+    except OSError as error:
+        log("could not run", argv, error)
+        return False
+
+
+def run_action(entry, phase):
+    """phase is 'press' or 'release'. Returns a short description or None."""
+    if not isinstance(entry, dict):
+        return None
+    if phase == "press":
+        command, keys = entry.get("command"), entry.get("keys")
+    else:
+        command, keys = entry.get("release_command"), entry.get("release_keys")
+    if isinstance(command, str) and command.strip():
+        spawn(command, shell=True)
+        return command.strip()
+    if isinstance(keys, str) and keys.strip():
+        argv = wtype_argv(keys)
+        if argv:
+            spawn(argv)
+            return "keys " + keys.strip()
+        log("unknown key combo:", keys)
+    return None
+
+
+# --------------------------------------------------------------------------
+# Device discovery
+# --------------------------------------------------------------------------
+
+def read_text(path):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
+def find_hidraw_nodes():
+    """{'input2': '/dev/hidraw0', 'input3': '/dev/hidraw1'} for the Vibekey."""
+    found = {}
+    base = "/sys/class/hidraw"
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        return found
+    for name in names:
+        uevent = read_text(os.path.join(base, name, "device", "uevent"))
+        hid_id = phys = ""
+        for line in uevent.splitlines():
+            if line.startswith("HID_ID="):
+                hid_id = line[7:]
+            elif line.startswith("HID_PHYS="):
+                phys = line[9:]
+        parts = hid_id.split(":")
+        if len(parts) != 3:
+            continue
+        try:
+            vendor, product = int(parts[1], 16), int(parts[2], 16)
+        except ValueError:
+            continue
+        if vendor != VENDOR_ID or product != PRODUCT_ID:
+            continue
+        iface = phys.rsplit("/", 1)[-1] if "/" in phys else phys
+        found[iface] = "/dev/" + name
+    return found
+
+
+def find_event_nodes():
+    """[(path, name)] evdev nodes belonging to the Vibekey."""
+    nodes = []
+    base = "/sys/class/input"
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        return nodes
+    for name in names:
+        if not name.startswith("event"):
+            continue
+        dev = os.path.join(base, name, "device")
+        if read_text(os.path.join(dev, "id", "vendor")).lower() != "%04x" % VENDOR_ID:
+            continue
+        if read_text(os.path.join(dev, "id", "product")).lower() != "%04x" % PRODUCT_ID:
+            continue
+        nodes.append(("/dev/input/" + name, read_text(os.path.join(dev, "name"))))
+    return nodes
+
+
+# --------------------------------------------------------------------------
+# The device
+# --------------------------------------------------------------------------
+
+class Vibekey:
+    def __init__(self):
+        self.hid_fd = None      # interface 2: standard HID reports
+        self.vendor_fd = None   # interface 3: TEA channel
+        self.event_fds = []     # grabbed evdev nodes
+        self.grabbed = False
+        self.names = []
+        self.keys_down = {}     # usage -> modifier names at press time
+        self.mods_down = ""     # modifier-only chord currently held
+        self.mods_fired = False
+        self.consumer_down = None
+        self.mouse_buttons = 0
+
+    @property
+    def connected(self):
+        return self.hid_fd is not None
+
+    def open(self, grab):
+        """Returns 'ok', 'absent' or 'denied'."""
+        hidraw = find_hidraw_nodes()
+        if "input2" not in hidraw:
+            return "absent"
+        try:
+            self.hid_fd = os.open(hidraw["input2"], os.O_RDWR | os.O_NONBLOCK | os.O_CLOEXEC)
+        except PermissionError:
+            return "denied"
+        except OSError as error:
+            # ENOENT/ENODEV: the dongle is mid-reboot; the next scan catches it.
+            if error.errno not in (errno.ENOENT, errno.ENODEV, errno.ENXIO):
+                log("open", hidraw["input2"], error)
+            return "absent"
+        if "input3" in hidraw:
+            try:
+                self.vendor_fd = os.open(hidraw["input3"], os.O_RDWR | os.O_NONBLOCK | os.O_CLOEXEC)
+            except OSError as error:
+                log("vendor channel unavailable:", error)
+                self.vendor_fd = None
+        self.names = []
+        for path, name in find_event_nodes():
+            self.names.append(name)
+            try:
+                fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+            except OSError as error:
+                log("open", path, error)
+                continue
+            self.event_fds.append(fd)
+        self.set_grab(grab)
+        return "ok"
+
+    def set_grab(self, grab):
+        ok = True
+        for fd in self.event_fds:
+            try:
+                fcntl.ioctl(fd, EVIOCGRAB, 1 if grab else 0)
+            except OSError as error:
+                if grab and error.errno != errno.EINVAL:
+                    ok = False
+                    log("grab failed:", error)
+        self.grabbed = bool(grab and ok and self.event_fds)
+
+    def close(self):
+        for fd in [self.hid_fd, self.vendor_fd] + self.event_fds:
+            if fd is None:
+                continue
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        self.hid_fd = self.vendor_fd = None
+        self.event_fds = []
+        self.grabbed = False
+        self.keys_down = {}
+        self.mods_down = ""
+        self.mods_fired = False
+        self.consumer_down = None
+        self.mouse_buttons = 0
+
+    def fds(self):
+        out = []
+        if self.hid_fd is not None:
+            out.append(self.hid_fd)
+        if self.vendor_fd is not None:
+            out.append(self.vendor_fd)
+        out.extend(self.event_fds)
+        return out
+
+    # ---- vendor channel -------------------------------------------------
+
+    def request_battery(self):
+        if self.vendor_fd is None:
+            return False
+        try:
+            os.write(self.vendor_fd, vendor_frame(BATTERY_REQUEST))
+            return True
+        except OSError as error:
+            log("battery request failed:", error)
+            return False
+
+    def read_vendor(self):
+        """Yields decoded (plaintext) frames waiting on the vendor channel."""
+        while True:
+            try:
+                report = os.read(self.vendor_fd, 128)
+            except BlockingIOError:
+                return
+            if not report:
+                return
+            plain = vendor_decode(report)
+            if plain:
+                yield plain
+
+    # ---- standard HID reports --------------------------------------------
+
+    def read_reports(self):
+        """Yields (raw_id, label, phase) for the controls in waiting reports."""
+        while True:
+            try:
+                report = os.read(self.hid_fd, 64)
+            except BlockingIOError:
+                return
+            if not report:
+                return
+            yield from self.decode(report)
+
+    def decode(self, report):
+        rid = report[0]
+        if rid == 0x03 and len(report) >= 4:
+            yield from self.decode_keyboard(report)
+        elif rid == 0x01 and len(report) >= 3:
+            yield from self.decode_consumer(report)
+        elif rid == 0x02 and len(report) >= 5:
+            yield from self.decode_mouse(report)
+
+    def decode_keyboard(self, report):
+        mod_byte = report[1]
+        mods = "+".join(sorted({name for bit, name in MODIFIER_BITS if mod_byte & bit}))
+        keys = [k for k in report[3:9] if k]
+        for usage in keys:
+            if usage not in self.keys_down:
+                self.keys_down[usage] = mods
+                self.mods_fired = True
+                yield self.keyboard_id(usage, mods), self.keyboard_label(usage, mods), "press"
+        for usage in list(self.keys_down):
+            if usage not in keys:
+                held = self.keys_down.pop(usage)
+                yield self.keyboard_id(usage, held), self.keyboard_label(usage, held), "release"
+        # A chord of modifiers alone (e.g. a key remapped to plain Ctrl).
+        if mods and not keys and not self.mods_down:
+            self.mods_down = mods
+            self.mods_fired = False
+        elif not mods and self.mods_down:
+            held, self.mods_down = self.mods_down, ""
+            if not self.mods_fired:
+                yield "kbd:" + held, "Keys " + self.pretty_mods(held), "press"
+                yield "kbd:" + held, "Keys " + self.pretty_mods(held), "release"
+
+    @staticmethod
+    def pretty_mods(mods):
+        return "+".join(m.capitalize() for m in mods.split("+") if m)
+
+    def keyboard_id(self, usage, mods):
+        return "kbd:" + (mods + "+" if mods else "") + "0x%02x" % usage
+
+    def keyboard_label(self, usage, mods):
+        name = KEYBOARD_USAGES.get(usage, "0x%02X" % usage)
+        return "Key " + (self.pretty_mods(mods) + "+" if mods else "") + name
+
+    def decode_consumer(self, report):
+        usage = report[1] | (report[2] << 8)
+        if usage and usage != self.consumer_down:
+            if self.consumer_down:
+                yield self.consumer_event(self.consumer_down, "release")
+            self.consumer_down = usage
+            yield self.consumer_event(usage, "press")
+        elif not usage and self.consumer_down:
+            usage, self.consumer_down = self.consumer_down, None
+            yield self.consumer_event(usage, "release")
+
+    @staticmethod
+    def consumer_event(usage, phase):
+        return "con:0x%04x" % usage, "Media " + CONSUMER_USAGES.get(usage, "0x%04X" % usage), phase
+
+    def decode_mouse(self, report):
+        buttons = report[1]
+        for bit in range(5):
+            mask = 1 << bit
+            if buttons & mask and not self.mouse_buttons & mask:
+                yield "mouse:%d" % (bit + 1), "Mouse button %d" % (bit + 1), "press"
+            elif not buttons & mask and self.mouse_buttons & mask:
+                yield "mouse:%d" % (bit + 1), "Mouse button %d" % (bit + 1), "release"
+        self.mouse_buttons = buttons
+        wheel = struct.unpack("b", report[4:5])[0] if len(report) > 4 else 0
+        for _ in range(abs(wheel)):
+            raw_id, label = ("wheel:cw", "Wheel down") if wheel > 0 else ("wheel:ccw", "Wheel up")
+            yield raw_id, label, "press"
+            yield raw_id, label, "release"
+        pan = struct.unpack("b", report[5:6])[0] if len(report) > 5 else 0
+        for _ in range(abs(pan)):
+            raw_id, label = ("pan:right", "Pan right") if pan > 0 else ("pan:left", "Pan left")
+            yield raw_id, label, "press"
+            yield raw_id, label, "release"
+
+    def drain_events(self):
+        for fd in self.event_fds:
+            try:
+                while os.read(fd, INPUT_EVENT_SIZE * 64):
+                    pass
+            except BlockingIOError:
+                pass
+            except OSError as error:
+                if error.errno in (errno.ENODEV, errno.EIO):
+                    raise
+
+
+# --------------------------------------------------------------------------
+# Main loop
+# --------------------------------------------------------------------------
+
+class Daemon:
+    def __init__(self, probe=False, grab=True, battery=True):
+        self.probe = probe
+        self.allow_grab = grab
+        self.allow_battery = battery
+        self.config = Config(CONFIG_PATH)
+        self.seen = Seen(SEEN_PATH)
+        self.state = State(STATE_PATH)
+        self.device = Vibekey()
+        self.next_rescan = 0.0
+        self.next_battery = 0.0
+        self.next_config = 0.0
+        self.running = True
+        self.events = 0
+
+    def want_grab(self):
+        return self.allow_grab and self.config.grab
+
+    def connect(self):
+        access = self.device.open(self.want_grab())
+        if access != "ok":
+            self.device.close()
+            self.state.set(connected=False, access=access, grabbed=False, device=None,
+                           error="No permission to read the Vibekey. Install the udev rule." if access == "denied" else "")
+            return False
+        log("connected:", ", ".join(self.device.names) or "hidraw only",
+            "(grabbed)" if self.device.grabbed else "(not grabbed)")
+        self.state.set(connected=True, access="ok", grabbed=self.device.grabbed, error="",
+                       device={"name": PRODUCT_NAME, "inputs": self.device.names,
+                               "vendor_channel": self.device.vendor_fd is not None})
+        self.next_battery = time.monotonic() + 1.0
+        return True
+
+    def disconnect(self, reason):
+        if self.device.connected:
+            log("disconnected:", reason)
+        self.device.close()
+        self.state.set(connected=False, grabbed=False, device=None, battery=None)
+        self.next_rescan = time.monotonic() + RESCAN_INTERVAL
+
+    def handle_control(self, raw_id, label, phase):
+        slot = DEFAULT_SLOTS.get(raw_id)
+        entry = self.config.button(raw_id, slot)
+        action = run_action(entry, phase)
+        if self.probe:
+            print("%s %-14s %-24s slot=%-10s action=%s" % (time.strftime("%H:%M:%S"), raw_id, label, slot or "-", action or "-"), flush=True)
+        if phase != "press":
+            return
+        self.events += 1
+        self.seen.note(raw_id, slot, label)
+        self.state.set(events=self.events, last={
+            "id": raw_id, "slot": slot, "label": SLOT_LABELS.get(slot, label),
+            "at": time.time(), "action": action or "",
+        })
+
+    def handle_vendor(self, plain):
+        header = plain[0] & 0x1F
+        if plain[0] & 0x80 and plain[1] == 0x01 and plain[2] == 0x02:
+            voltage = plain[4] | (plain[5] << 8)
+            percent = plain[6] | (plain[7] << 8)
+            charging = plain[10] == 1
+            if 0 <= percent <= 100:
+                self.state.set(battery={"percent": percent, "charging": charging,
+                                        "voltage_mv": voltage, "at": time.time()})
+            return
+        if self.probe and header not in (0x06,):  # 0x06 = device heartbeats
+            print("vendor frame:", plain[:16].hex(" "), flush=True)
+
+    def poll_battery(self, now):
+        if not (self.allow_battery and self.config.battery):
+            return
+        if now < self.next_battery:
+            return
+        self.next_battery = now + BATTERY_INTERVAL
+        self.device.request_battery()
+
+    def apply_config_change(self):
+        if self.device.connected and self.device.grabbed != self.want_grab():
+            self.device.set_grab(self.want_grab())
+            self.state.set(grabbed=self.device.grabbed)
+
+    def run(self):
+        log("config:", CONFIG_PATH)
+        log("state:", STATE_PATH)
+        while self.running:
+            now = time.monotonic()
+            if now >= self.next_config:
+                self.next_config = now + CONFIG_POLL
+                if self.config.reload():
+                    self.apply_config_change()
+            if not self.device.connected:
+                if now >= self.next_rescan:
+                    self.next_rescan = now + RESCAN_INTERVAL
+                    self.connect()
+                time.sleep(min(CONFIG_POLL, max(0.05, self.next_rescan - time.monotonic())))
+                continue
+            self.poll_battery(now)
+            try:
+                ready, _, _ = select.select(self.device.fds(), [], [], CONFIG_POLL)
+            except (OSError, ValueError) as error:
+                self.disconnect("select: %s" % error)
+                continue
+            try:
+                for fd in ready:
+                    if fd == self.device.hid_fd:
+                        for raw_id, label, phase in self.device.read_reports():
+                            self.handle_control(raw_id, label, phase)
+                    elif fd == self.device.vendor_fd:
+                        for plain in self.device.read_vendor():
+                            self.handle_vendor(plain)
+                    else:
+                        self.device.drain_events()
+            except OSError as error:
+                self.disconnect(str(error))
+
+    def stop(self, *_):
+        self.running = False
+
+
+def die_with_parent():
+    """Ask the kernel for SIGTERM when the parent (the Omarchy shell's Process)
+    goes away, so a shell restart never leaves an orphan holding the device."""
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.prctl(1, signal.SIGTERM, 0, 0, 0)  # PR_SET_PDEATHSIG
+    except (OSError, AttributeError):
+        pass
+
+
+def acquire_lock():
+    os.makedirs(RUNTIME_DIR, exist_ok=True)
+    fd = os.open(LOCK_PATH, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    deadline = time.monotonic() + 5.0
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fd
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                log("another vibekeyd holds the device; exiting")
+                sys.exit(0)
+            time.sleep(0.2)
+
+
+def main(argv):
+    probe = "--probe" in argv
+    grab = "--no-grab" not in argv
+    battery = "--no-battery" not in argv
+    if "-h" in argv or "--help" in argv:
+        print(__doc__.strip())
+        return 0
+    if "--no-pdeathsig" not in argv:
+        die_with_parent()
+    lock_fd = acquire_lock()
+    daemon = Daemon(probe=probe, grab=grab, battery=battery)
+    signal.signal(signal.SIGTERM, daemon.stop)
+    signal.signal(signal.SIGINT, daemon.stop)
+    signal.signal(signal.SIGHUP, lambda *_: daemon.config.reload(force=True) or daemon.apply_config_change())
+    try:
+        daemon.run()
+    finally:
+        daemon.device.close()
+        daemon.state.set(connected=False, grabbed=False, access="stopped", pid=0)
+        os.close(lock_fd)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
