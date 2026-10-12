@@ -386,6 +386,7 @@ Panel {
           anchors.centerIn: parent
           iconSize: Style.bar.iconCanvas
           color: button.active ? button.activeColor : button.foreground
+          background: root.bar ? root.bar.background : Color.bar.background
         }
       }
     }
@@ -548,6 +549,7 @@ Panel {
               VibekeyIcon {
                 iconSize: Style.font.display
                 color: root.foreground
+                background: Color.popups.background
               }
             }
 
