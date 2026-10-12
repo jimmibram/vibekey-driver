@@ -47,8 +47,8 @@ into `~/.config/omarchy/plugins/`, enables it and installs the rule.
   The others pair the directions: volume, brightness, workspaces, agents in
   herdr, windows, tabs, arrows, media tracks, zoom, undo and redo.
 - Changes apply immediately. The daemon picks the config up within a second.
-- **Block the factory keystrokes** is on by default. Turn it off if you also want
-  the keypad's own Enter/Escape to reach your apps.
+- The keypad's own keystrokes (Enter, Escape, Backspace and so on) never reach
+  your apps; only the assigned actions run.
 
 Push-to-talk works because the daemon sees key releases too: a preset may carry a
 `release_command`, and the Voice key runs `voxtype record start` on press and
@@ -59,7 +59,8 @@ Push-to-talk works because the daemon sees key releases too: a preset may carry 
 The six controls are recognised by what they send from the factory. If you have
 changed a key in Ulanzi Studio, it shows up under **Also seen** with its raw code.
 Click the key you mean in the drawing and press it on the keypad: it is learned
-and from then on counts as that key. Or open the raw entry and pick which key it
+and from then on counts as that key. That also fixes a keypad whose keys send
+each other's factory codes. Or open the raw entry and pick which key it
 is. Learned mappings are `aliases` in the config file.
 
 ## Flipping between agents in herdr

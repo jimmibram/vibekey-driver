@@ -48,7 +48,6 @@ Panel {
   readonly property bool daemonRunning: daemon.running
   readonly property bool connected: state.connected === true
   readonly property bool accessDenied: state.access === "denied"
-  readonly property bool grabbing: !(config && config.grab === false)
   readonly property var assigned: Model.buttons(config)
   readonly property var rows: Model.controls(config, seen, presets)
   readonly property var extras: rows.filter(function(r) { return r.extra })
@@ -95,7 +94,9 @@ Panel {
   property string learned: ""   // "<slot> now answers to <label>", shown in the editor
   property real lastEventAt: 0
   property int lastEvents: -1
-  property real knobAngle: 0
+  // The drawn knob follows the daemon's running notch count, so a burst of
+  // turns that outruns the file watch still lands on the right angle.
+  readonly property real knobAngle: Number(state.knob_position || 0) * knobStep
   readonly property real knobStep: 18
   property bool installingAccess: false
   property string saveError: ""
@@ -116,20 +117,17 @@ Panel {
     if (last && Number(last.at) > root.lastEventAt) {
       if (root.lastEventAt > 0) {
         var slot = String(last.slot || "")
-        // Learning: with a key's editor open, a control the firmware sends under
-        // some other code becomes that key.
+        // Learning: with a key's editor open, whatever the keypad sends (a turn
+        // excepted) becomes that key, factory code or not.
         var learnable = ["key1", "key2", "key3", "knob"].indexOf(root.editing) !== -1
-        if (root.opened && learnable && last.id && !Model.FACTORY_IDS[last.id] && slot !== root.editing) {
+        var turning = /^(wheel|pan):/.test(String(last.id || ""))
+        if (root.opened && learnable && last.id && !turning && slot !== root.editing) {
           root.runConfig(["alias", String(last.id), root.editing])
           root.learned = root.titleFor(root.editing) + " now answers to " + String(last.label || last.id)
           slot = root.editing
         }
         root.flashing = slot || String(last.id || "")
         flashTimer.restart()
-        // Turn the drawn knob with the real one: one step per notch seen.
-        var notches = root.lastEvents >= 0 && events > root.lastEvents ? events - root.lastEvents : 1
-        if (last.slot === "knob_right") root.knobAngle += root.knobStep * notches
-        else if (last.slot === "knob_left") root.knobAngle -= root.knobStep * notches
       }
       root.lastEventAt = Number(last.at)
     }
@@ -279,13 +277,6 @@ Panel {
     if (!pair) return
     root.saveButton("knob_right", pair.right)
     root.saveButton("knob_left", pair.left)
-  }
-
-  function setGrab(enabled) {
-    var next = Model.isObject(root.config) ? JSON.parse(JSON.stringify(root.config)) : {}
-    next.grab = enabled
-    root.config = next
-    root.runConfig(["set", "grab", enabled ? "true" : "false"])
   }
 
   // A free-form choice picked in the dropdown but not typed yet.
@@ -1017,22 +1008,6 @@ Panel {
                 wrapMode: Text.WordWrap
               }
             }
-          }
-
-          PanelSeparator { foreground: root.foreground }
-
-          // ---------- Options ----------
-          Toggle {
-            width: parent.width
-            label: "Block the factory keystrokes"
-            description: root.grabbing
-              ? "Enter, Esc, PrintScreen and the arrows from the Vibekey stay inside this plugin."
-              : "Off: the Vibekey also types its factory keys into whatever is focused."
-            checked: root.grabbing
-            foreground: root.foreground
-            accent: root.accent
-            fontFamily: root.fontFamily
-            onClicked: root.setGrab(!root.grabbing)
           }
 
           Text {

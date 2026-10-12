@@ -213,9 +213,6 @@ function aliasOf(config, rawId) {
   return aliases[rawId] ? String(aliases[rawId]) : "none"
 }
 
-// Raw ids the factory firmware sends; learning never re-maps those.
-var FACTORY_IDS = { "kbd:0x01": 1, "kbd:0x28": 1, "kbd:0x29": 1, "kbd:0x46": 1, "kbd:0x4f": 1, "kbd:0x2a": 1, "wheel:cw": 1, "wheel:ccw": 1 }
-
 function statusText(state, daemonRunning) {
   if (!isObject(state)) return daemonRunning ? "Starting driver…" : "Driver not running"
   if (state.access === "denied") return "Needs device access"

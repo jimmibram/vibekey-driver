@@ -235,10 +235,6 @@ class Config:
         return True
 
     @property
-    def grab(self):
-        return self.data.get("grab", True) is not False
-
-    @property
     def battery(self):
         return self.data.get("battery", True) is not False
 
@@ -307,6 +303,7 @@ class State:
             "grabbed": False,
             "mouse_passthrough": False,
             "preview": False,
+            "knob_position": 0,
             "device": None,
             "battery": None,
             "last": None,
@@ -717,9 +714,10 @@ class Daemon:
         self.next_config = 0.0
         self.running = True
         self.events = 0
+        self.knob_position = 0
 
     def want_grab(self):
-        return self.allow_grab and self.config.grab
+        return self.allow_grab
 
     @staticmethod
     def preview_active():
@@ -766,8 +764,12 @@ class Daemon:
         if phase != "press":
             return
         self.events += 1
+        if slot == "knob_right":
+            self.knob_position += 1
+        elif slot == "knob_left":
+            self.knob_position -= 1
         self.seen.note(raw_id, slot, label)
-        self.state.set(events=self.events, preview=preview, last={
+        self.state.set(events=self.events, preview=preview, knob_position=self.knob_position, last={
             "id": raw_id, "slot": slot, "label": SLOT_LABELS.get(slot, label),
             "at": time.time(), "action": action or "", "preview": preview,
         })
