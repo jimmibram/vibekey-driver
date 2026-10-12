@@ -320,6 +320,7 @@ Panel {
     root.draftMode = ""
     root.learned = ""
     root.editing = root.editing === key ? "" : key
+    if (root.editing === "") Qt.callLater(function() { keyCatcher.forceActiveFocus() })
     var at = root.cursorKeys.indexOf(key)
     if (at >= 0) root.cursorIndex = at
   }
@@ -914,9 +915,13 @@ Panel {
               showLabel: false
               placeholderText: "Search…"
               fontFamily: root.fontFamily
+              id: knobTurnDropdown
               options: root.knobTurnOptions
               value: root.knobTurnMode
-              onChanged: function(value) { root.saveKnobTurn(value) }
+              onChanged: function(value) {
+                root.saveKnobTurn(value)
+                knobTurnDropdown.value = Qt.binding(function() { return root.knobTurnMode })
+              }
             }
 
             SearchableDropdown {
@@ -926,9 +931,13 @@ Panel {
               showLabel: false
               placeholderText: "Search actions…"
               fontFamily: root.fontFamily
+              id: actionDropdown
               options: root.editorOptions
               value: root.editorMode
-              onChanged: function(value) { root.chooseMode(root.editing, value) }
+              onChanged: function(value) {
+                root.chooseMode(root.editing, value)
+                actionDropdown.value = Qt.binding(function() { return root.editorMode })
+              }
             }
 
             TextField {
@@ -941,6 +950,7 @@ Panel {
               foreground: root.foreground
               accent: root.accent
               onVisibleChanged: if (visible) Qt.callLater(function() { commandField.forceActiveFocus() })
+              Keys.onEscapePressed: root.toggleEditor(root.editing)
               onAccepted: {
                 root.draftMode = ""
                 root.saveButton(root.editing, Model.entryForCommand(text))
@@ -957,6 +967,7 @@ Panel {
               foreground: root.foreground
               accent: root.accent
               onVisibleChanged: if (visible) Qt.callLater(function() { keysField.forceActiveFocus() })
+              Keys.onEscapePressed: root.toggleEditor(root.editing)
               onAccepted: {
                 root.draftMode = ""
                 root.saveButton(root.editing, Model.entryForKeys(text))
