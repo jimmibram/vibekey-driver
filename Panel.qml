@@ -37,7 +37,6 @@ Panel {
   readonly property color muted: Qt.darker(foreground, 1.4)
   readonly property color faint: Qt.darker(foreground, 1.9)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
-  readonly property string glyph: "󰌌"  // nf-md-keyboard_variant
 
   property var state: ({})
   property var config: ({})
@@ -381,7 +380,15 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.glyph
+    iconComponent: Component {
+      Item {
+        VibekeyIcon {
+          anchors.centerIn: parent
+          iconSize: Style.bar.iconCanvas
+          color: button.active ? button.activeColor : button.foreground
+        }
+      }
+    }
     active: root.accessDenied
     activeColor: root.urgent
     opacity: root.connected || root.accessDenied ? 1 : 0.55
@@ -538,11 +545,9 @@ Panel {
             iconOpacity: root.connected ? 1 : 0.5
 
             iconComponent: Component {
-              Text {
-                text: root.glyph
+              VibekeyIcon {
+                iconSize: Style.font.display
                 color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.display
               }
             }
 
