@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
@@ -351,6 +352,55 @@ Panel {
     function refresh(): string { root.refreshFiles(); return "ok" }
     function restartDriver(): string { daemon.running = false; restartTimer.start(); return "ok" }
     function edit(key: string): string { root.open(); root.toggleEditor(String(key || "")); return root.editing }
+    function flash(): void { root.flash() }
+  }
+
+  // ------------------------------------------------------------ flash
+
+  // A brief Vibekey icon where Omarchy's OSD sits: feedback for an action a
+  // control just ran, without words.
+  property bool flashShown: false
+
+  function flash() {
+    root.flashShown = true
+    flashHideTimer.restart()
+  }
+
+  Timer {
+    id: flashHideTimer
+    interval: 650
+    onTriggered: root.flashShown = false
+  }
+
+  PanelWindow {
+    visible: root.flashShown
+    anchors { top: true; bottom: true; left: true; right: true }
+    color: "transparent"
+    WlrLayershell.namespace: "vibekey-flash"
+    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+    exclusionMode: ExclusionMode.Ignore
+    mask: Region {}
+
+    BorderSurface {
+      id: flashCard
+      readonly property real pad: Style.space(14)
+      width: flashCard.borderLeft + pad + flashIcon.width + pad + flashCard.borderRight
+      height: flashCard.borderTop + pad + flashIcon.height + pad + flashCard.borderBottom
+      anchors.horizontalCenter: parent.horizontalCenter
+      anchors.bottom: parent.bottom
+      anchors.bottomMargin: Style.space(67)
+      color: Util.alpha(Color.background, 0.97)
+      borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
+      radius: Style.cornerRadius
+
+      VibekeyIcon {
+        id: flashIcon
+        anchors.centerIn: parent
+        iconSize: Style.font.displayLarge
+        color: Color.foreground
+      }
+    }
   }
 
   // ------------------------------------------------------------ bar button

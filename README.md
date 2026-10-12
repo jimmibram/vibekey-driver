@@ -67,9 +67,10 @@ The presets **Next agent in herdr** and **Previous agent in herdr** run
 `bin/vibekey-herdr-agent`. It finds the herdr TUI you have open (a local session,
 `herdr --session`, `herdr --machine`, or `herdr --remote <host>`), asks that
 session for its agents over the herdr socket API (through SSH for a remote
-session), focuses the next or previous one, brings the herdr window to the
-front and shows the agent's name in the OSD. With no agents running it flips
-between herdr workspaces instead; with no herdr open it just says so.
+session, over a control socket it keeps open so a switch takes about a tenth of
+a second), focuses the next or previous one, brings the herdr window to the
+front and flashes the Vibekey icon where Omarchy's OSD sits. With no agents
+running it flips between herdr workspaces instead; with no herdr open it says so.
 
 ## How it works
 
