@@ -1,6 +1,6 @@
 import QtQuick
 
-// The Vibekey as a glyph: four microphone grille lines above the knob, a
+// The Vibekey as a glyph: three microphone grille lines above the knob, a
 // ring with a dot in the middle. Drawn with rectangles so it stays crisp at
 // bar size.
 Item {
@@ -19,13 +19,13 @@ Item {
   readonly property real grilleHeight: Math.round(iconSize * 0.2)
   readonly property real ringSize: Math.round(iconSize * 0.66)
 
-  // Grille: four short bars across the top.
+  // Grille: three short bars across the top.
   Row {
     anchors.top: parent.top
     anchors.horizontalCenter: parent.horizontalCenter
     spacing: Math.max(1, Math.round(root.iconSize / 9))
     Repeater {
-      model: 4
+      model: 3
       Rectangle {
         width: root.stroke
         height: root.grilleHeight
