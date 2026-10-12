@@ -3,6 +3,7 @@
   "presets": [
     {
       "id": "dictation_ptt",
+      "group": "Dictation",
       "label": "Push-to-talk dictation",
       "description": "Hold to record, release to transcribe (voxtype)",
       "command": "voxtype record start",
@@ -10,291 +11,339 @@
     },
     {
       "id": "dictation_toggle",
+      "group": "Dictation",
       "label": "Toggle dictation",
       "description": "voxtype record toggle",
       "command": "voxtype record toggle"
     },
     {
       "id": "dictation_cancel",
+      "group": "Dictation",
       "label": "Cancel dictation",
       "description": "Discard the current recording (voxtype)",
       "command": "voxtype record cancel"
     },
     {
       "id": "key_enter",
+      "group": "Keys",
       "label": "Press Enter",
       "description": "Confirm, like the factory setting",
       "keys": "Return"
     },
     {
       "id": "key_escape",
+      "group": "Keys",
       "label": "Press Escape",
       "description": "Cancel, like the factory setting",
       "keys": "Escape"
     },
     {
       "id": "key_tab",
+      "group": "Keys",
       "label": "Press Tab",
       "description": "Keys: Tab",
       "keys": "Tab"
     },
     {
       "id": "key_shift_tab",
+      "group": "Keys",
       "label": "Press Shift+Tab",
       "description": "Cycle Claude Code modes",
       "keys": "shift+Tab"
     },
     {
       "id": "key_ctrl_c",
+      "group": "Keys",
       "label": "Press Ctrl+C",
       "description": "Interrupt the running agent",
       "keys": "ctrl+c"
     },
     {
       "id": "key_ctrl_enter",
+      "group": "Keys",
       "label": "Press Ctrl+Enter",
       "description": "Keys: ctrl+Return",
       "keys": "ctrl+Return"
     },
     {
       "id": "key_up",
+      "group": "Keys",
       "label": "Press Up",
       "description": "Keys: Up",
       "keys": "Up"
     },
     {
       "id": "key_down",
+      "group": "Keys",
       "label": "Press Down",
       "description": "Keys: Down",
       "keys": "Down"
     },
     {
-      "id": "agent",
-      "label": "Open coding agent",
-      "description": "omarchy agent",
-      "command": "omarchy agent"
-    },
-    {
-      "id": "terminal",
-      "label": "Open terminal",
-      "description": "omarchy launch terminal",
-      "command": "omarchy launch terminal"
-    },
-    {
-      "id": "browser",
-      "label": "Open browser",
-      "description": "omarchy launch browser",
-      "command": "omarchy launch browser"
-    },
-    {
       "id": "herdr_next",
+      "group": "Herdr",
       "label": "Next agent in herdr",
       "description": "Flip to the next coding agent in your open herdr (local or remote)",
       "command": "\"$HOME/.config/omarchy/plugins/jimmibram.vibekey/bin/vibekey-herdr-agent\" next"
     },
     {
       "id": "herdr_prev",
+      "group": "Herdr",
       "label": "Previous agent in herdr",
       "description": "Flip to the previous coding agent in your open herdr",
       "command": "\"$HOME/.config/omarchy/plugins/jimmibram.vibekey/bin/vibekey-herdr-agent\" prev"
     },
     {
       "id": "herdr_open",
+      "group": "Herdr",
       "label": "Open herdr",
       "description": "omarchy launch terminal herdr",
       "command": "omarchy launch terminal herdr"
     },
     {
+      "id": "agent",
+      "group": "Apps",
+      "label": "Open coding agent",
+      "description": "omarchy agent",
+      "command": "omarchy agent"
+    },
+    {
+      "id": "terminal",
+      "group": "Apps",
+      "label": "Open terminal",
+      "description": "omarchy launch terminal",
+      "command": "omarchy launch terminal"
+    },
+    {
+      "id": "browser",
+      "group": "Apps",
+      "label": "Open browser",
+      "description": "omarchy launch browser",
+      "command": "omarchy launch browser"
+    },
+    {
       "id": "menu",
+      "group": "Omarchy",
       "label": "Omarchy menu",
       "description": "omarchy-menu toggle",
       "command": "omarchy-menu toggle"
     },
     {
       "id": "menu_apps",
+      "group": "Omarchy",
       "label": "Apps menu",
       "description": "omarchy-menu toggle apps",
       "command": "omarchy-menu toggle apps"
     },
     {
       "id": "menu_system",
+      "group": "Omarchy",
       "label": "System menu",
       "description": "omarchy-menu toggle system",
       "command": "omarchy-menu toggle system"
     },
     {
       "id": "clipboard",
+      "group": "Omarchy",
       "label": "Clipboard manager",
       "description": "omarchy-shell shell toggle omarchy.clipboard",
       "command": "omarchy-shell shell toggle omarchy.clipboard"
     },
     {
       "id": "emojis",
+      "group": "Omarchy",
       "label": "Emoji picker",
       "description": "omarchy-shell shell toggle omarchy.emojis",
       "command": "omarchy-shell shell toggle omarchy.emojis"
     },
     {
       "id": "audio_panel",
+      "group": "Omarchy",
       "label": "Audio panel",
       "description": "omarchy-shell shell toggle omarchy.audio",
       "command": "omarchy-shell shell toggle omarchy.audio"
     },
     {
-      "id": "volume_up",
-      "label": "Volume up",
-      "description": "omarchy-audio-output-volume raise",
-      "command": "omarchy-audio-output-volume raise"
-    },
-    {
-      "id": "volume_down",
-      "label": "Volume down",
-      "description": "omarchy-audio-output-volume lower",
-      "command": "omarchy-audio-output-volume lower"
-    },
-    {
-      "id": "volume_mute",
-      "label": "Mute / unmute",
-      "description": "omarchy-audio-output-volume mute-toggle",
-      "command": "omarchy-audio-output-volume mute-toggle"
-    },
-    {
-      "id": "mic_mute",
-      "label": "Mute / unmute microphone",
-      "description": "omarchy-audio-input-mute",
-      "command": "omarchy-audio-input-mute"
-    },
-    {
-      "id": "audio_switch",
-      "label": "Switch audio output",
-      "description": "omarchy-audio-output-switch",
-      "command": "omarchy-audio-output-switch"
-    },
-    {
-      "id": "media_play",
-      "label": "Play / pause",
-      "description": "omarchy-shell media playPause",
-      "command": "omarchy-shell media playPause"
-    },
-    {
-      "id": "media_next",
-      "label": "Next track",
-      "description": "omarchy-shell media next",
-      "command": "omarchy-shell media next"
-    },
-    {
-      "id": "media_prev",
-      "label": "Previous track",
-      "description": "omarchy-shell media previous",
-      "command": "omarchy-shell media previous"
-    },
-    {
-      "id": "brightness_up",
-      "label": "Brightness up",
-      "description": "omarchy-brightness-display +5%",
-      "command": "omarchy-brightness-display +5%"
-    },
-    {
-      "id": "brightness_down",
-      "label": "Brightness down",
-      "description": "omarchy-brightness-display 5%-",
-      "command": "omarchy-brightness-display 5%-"
-    },
-    {
-      "id": "screenshot",
-      "label": "Screenshot",
-      "description": "omarchy-capture-screenshot",
-      "command": "omarchy-capture-screenshot"
-    },
-    {
-      "id": "screenrecord",
-      "label": "Start / stop screen recording",
-      "description": "omarchy capture screenrecording",
-      "command": "omarchy-capture-screenrecording --stop-recording || omarchy-menu toggle trigger.capture.screenrecord"
-    },
-    {
-      "id": "capture_text",
-      "label": "Copy text from screen (OCR)",
-      "description": "omarchy capture text",
-      "command": "omarchy capture text"
-    },
-    {
-      "id": "color_picker",
-      "label": "Color picker",
-      "description": "hyprpicker -a",
-      "command": "pkill hyprpicker || hyprpicker -a"
-    },
-    {
-      "id": "workspace_next",
-      "label": "Next workspace",
-      "description": "hyprctl dispatch workspace m+1",
-      "command": "hyprctl dispatch workspace m+1"
-    },
-    {
-      "id": "workspace_prev",
-      "label": "Previous workspace",
-      "description": "hyprctl dispatch workspace m-1",
-      "command": "hyprctl dispatch workspace m-1"
-    },
-    {
-      "id": "window_next",
-      "label": "Focus next window",
-      "description": "hyprctl dispatch cyclenext",
-      "command": "hyprctl dispatch cyclenext"
-    },
-    {
-      "id": "window_close",
-      "label": "Close window",
-      "description": "hyprctl dispatch killactive",
-      "command": "hyprctl dispatch killactive"
-    },
-    {
-      "id": "window_fullscreen",
-      "label": "Toggle full screen",
-      "description": "hyprctl dispatch fullscreen",
-      "command": "hyprctl dispatch fullscreen"
-    },
-    {
-      "id": "window_float",
-      "label": "Toggle floating",
-      "description": "hyprctl dispatch togglefloating",
-      "command": "hyprctl dispatch togglefloating"
-    },
-    {
-      "id": "scratchpad",
-      "label": "Toggle scratchpad",
-      "description": "hyprctl dispatch togglespecialworkspace scratchpad",
-      "command": "hyprctl dispatch togglespecialworkspace scratchpad"
-    },
-    {
       "id": "notification_dismiss",
+      "group": "Omarchy",
       "label": "Dismiss last notification",
       "description": "omarchy-shell notifications dismissOne",
       "command": "omarchy-shell notifications dismissOne"
     },
     {
       "id": "notification_history",
+      "group": "Omarchy",
       "label": "Notification history",
       "description": "omarchy-shell notifications showHistory",
       "command": "omarchy-shell notifications showHistory"
     },
     {
       "id": "nightlight",
+      "group": "Omarchy",
       "label": "Toggle night light",
       "description": "omarchy toggle nightlight",
       "command": "omarchy toggle nightlight"
     },
     {
       "id": "theme_next",
+      "group": "Omarchy",
       "label": "Next theme",
       "description": "omarchy theme next",
       "command": "omarchy theme next"
     },
     {
       "id": "lock",
+      "group": "Omarchy",
       "label": "Lock screen",
       "description": "omarchy system lock",
       "command": "omarchy system lock"
+    },
+    {
+      "id": "volume_up",
+      "group": "Sound",
+      "label": "Volume up",
+      "description": "omarchy-audio-output-volume raise",
+      "command": "omarchy-audio-output-volume raise"
+    },
+    {
+      "id": "volume_down",
+      "group": "Sound",
+      "label": "Volume down",
+      "description": "omarchy-audio-output-volume lower",
+      "command": "omarchy-audio-output-volume lower"
+    },
+    {
+      "id": "volume_mute",
+      "group": "Sound",
+      "label": "Mute / unmute",
+      "description": "omarchy-audio-output-volume mute-toggle",
+      "command": "omarchy-audio-output-volume mute-toggle"
+    },
+    {
+      "id": "mic_mute",
+      "group": "Sound",
+      "label": "Mute / unmute microphone",
+      "description": "omarchy-audio-input-mute",
+      "command": "omarchy-audio-input-mute"
+    },
+    {
+      "id": "audio_switch",
+      "group": "Sound",
+      "label": "Switch audio output",
+      "description": "omarchy-audio-output-switch",
+      "command": "omarchy-audio-output-switch"
+    },
+    {
+      "id": "media_play",
+      "group": "Sound",
+      "label": "Play / pause",
+      "description": "omarchy-shell media playPause",
+      "command": "omarchy-shell media playPause"
+    },
+    {
+      "id": "media_next",
+      "group": "Sound",
+      "label": "Next track",
+      "description": "omarchy-shell media next",
+      "command": "omarchy-shell media next"
+    },
+    {
+      "id": "media_prev",
+      "group": "Sound",
+      "label": "Previous track",
+      "description": "omarchy-shell media previous",
+      "command": "omarchy-shell media previous"
+    },
+    {
+      "id": "brightness_up",
+      "group": "Screen",
+      "label": "Brightness up",
+      "description": "omarchy-brightness-display +5%",
+      "command": "omarchy-brightness-display +5%"
+    },
+    {
+      "id": "brightness_down",
+      "group": "Screen",
+      "label": "Brightness down",
+      "description": "omarchy-brightness-display 5%-",
+      "command": "omarchy-brightness-display 5%-"
+    },
+    {
+      "id": "screenshot",
+      "group": "Screen",
+      "label": "Screenshot",
+      "description": "omarchy-capture-screenshot",
+      "command": "omarchy-capture-screenshot"
+    },
+    {
+      "id": "screenrecord",
+      "group": "Screen",
+      "label": "Start / stop screen recording",
+      "description": "omarchy capture screenrecording",
+      "command": "omarchy-capture-screenrecording --stop-recording || omarchy-menu toggle trigger.capture.screenrecord"
+    },
+    {
+      "id": "capture_text",
+      "group": "Screen",
+      "label": "Copy text from screen (OCR)",
+      "description": "omarchy capture text",
+      "command": "omarchy capture text"
+    },
+    {
+      "id": "color_picker",
+      "group": "Screen",
+      "label": "Color picker",
+      "description": "hyprpicker -a",
+      "command": "pkill hyprpicker || hyprpicker -a"
+    },
+    {
+      "id": "workspace_next",
+      "group": "Windows",
+      "label": "Next workspace",
+      "description": "hyprctl dispatch workspace m+1",
+      "command": "hyprctl dispatch workspace m+1"
+    },
+    {
+      "id": "workspace_prev",
+      "group": "Windows",
+      "label": "Previous workspace",
+      "description": "hyprctl dispatch workspace m-1",
+      "command": "hyprctl dispatch workspace m-1"
+    },
+    {
+      "id": "window_next",
+      "group": "Windows",
+      "label": "Focus next window",
+      "description": "hyprctl dispatch cyclenext",
+      "command": "hyprctl dispatch cyclenext"
+    },
+    {
+      "id": "window_close",
+      "group": "Windows",
+      "label": "Close window",
+      "description": "hyprctl dispatch killactive",
+      "command": "hyprctl dispatch killactive"
+    },
+    {
+      "id": "window_fullscreen",
+      "group": "Windows",
+      "label": "Toggle full screen",
+      "description": "hyprctl dispatch fullscreen",
+      "command": "hyprctl dispatch fullscreen"
+    },
+    {
+      "id": "window_float",
+      "group": "Windows",
+      "label": "Toggle floating",
+      "description": "hyprctl dispatch togglefloating",
+      "command": "hyprctl dispatch togglefloating"
+    },
+    {
+      "id": "scratchpad",
+      "group": "Windows",
+      "label": "Toggle scratchpad",
+      "description": "hyprctl dispatch togglespecialworkspace scratchpad",
+      "command": "hyprctl dispatch togglespecialworkspace scratchpad"
     }
   ],
   "knob_turn": [

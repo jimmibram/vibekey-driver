@@ -105,6 +105,33 @@ Panel {
   property int cursorIndex: 0
   readonly property var cursorKeys: slotOrder
 
+  // ------------------------------------------------------------ simulator
+
+  // The fake herdr window reacts to what the keypad does: the knob scrolls
+  // its scribbled text, keys show their action in its status line.
+  property string simControl: ""
+  property string simStatus: ""
+  property int simAgent: 1
+  readonly property int simAgents: 5
+  readonly property int knobPosition: Number(state.knob_position || 0)
+
+  function simulate(key) {
+    if (key === "knob_right" || key === "knob_left") return  // the scroll itself shows
+    root.simControl = key
+    root.simStatus = root.summaryFor(key)
+    var entry = root.assigned[key]
+    var preset = entry ? String(entry.preset || "") : ""
+    if (preset === "herdr_next") root.simAgent = (root.simAgent + 1) % root.simAgents
+    else if (preset === "herdr_prev") root.simAgent = (root.simAgent + root.simAgents - 1) % root.simAgents
+    simTimer.restart()
+  }
+
+  Timer {
+    id: simTimer
+    interval: 1400
+    onTriggered: { root.simControl = ""; root.simStatus = "" }
+  }
+
   // ------------------------------------------------------------ data files
 
   function applyState(text) {
@@ -127,6 +154,7 @@ Panel {
         }
         root.flashing = slot || String(last.id || "")
         flashTimer.restart()
+        root.simulate(slot || String(last.id || ""))
       }
       root.lastEventAt = Number(last.at)
     }
@@ -278,20 +306,15 @@ Panel {
     root.saveButton("knob_left", pair.left)
   }
 
-  // A free-form choice picked in the dropdown but not typed yet.
-  property string draftMode: ""
-
-  function chooseMode(key, mode) {
-    if (mode === "none") { root.draftMode = ""; root.saveButton(key, null); return }
-    if (mode === "custom" || mode === "keys") { root.draftMode = mode; return }
-    root.draftMode = ""
-    root.saveButton(key, Model.entryForPreset(Model.presetById(root.presets, mode)))
+  function choosePreset(key, id) {
+    root.saveButton(key, Model.entryForPreset(Model.presetById(root.presets, id)))
   }
 
   readonly property string editorMode: root.editing === "" || root.editing === "knob_turn"
     ? "none"
-    : (root.draftMode !== "" ? root.draftMode : Model.editorMode(root.assigned[root.editing], root.presets))
-  readonly property bool editorTyping: editorMode === "custom" || editorMode === "keys"
+    : Model.editorMode(root.assigned[root.editing], root.presets)
+  // A text field in the picker has the keyboard: the panel's own keys stand back.
+  property bool editorTyping: false
 
   function installAccess() {
     if (accessProc.running) return
@@ -317,7 +340,6 @@ Panel {
   }
 
   function toggleEditor(key) {
-    root.draftMode = ""
     root.learned = ""
     root.editing = root.editing === key ? "" : key
     if (root.editing === "") Qt.callLater(function() { keyCatcher.forceActiveFocus() })
@@ -338,7 +360,6 @@ Panel {
       Qt.callLater(function() { keyCatcher.forceActiveFocus() })
     } else {
       root.editing = ""
-      root.draftMode = ""
       root.writePreview("closed")
     }
   }
@@ -525,6 +546,59 @@ Panel {
     }
   }
 
+  // ------------------------------------------------------------ pieces (picker)
+
+  // One choice in the picker: a tile that lights when it is the assignment.
+  component Tile: CursorSurface {
+    id: tile
+    required property string tileId
+    required property string label
+    property string description: ""
+    property bool selected: false
+    signal picked(string id)
+    height: Style.space(46)
+    current: selected
+    hasCursor: tileMouse.containsMouse
+    foreground: root.foreground
+    accent: root.accent
+    outline: selected
+
+    Text {
+      anchors.fill: parent
+      anchors.margins: Style.space(6)
+      textFormat: Text.PlainText
+      text: tile.label
+      color: tile.selected ? root.accent : root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      font.bold: tile.selected
+      horizontalAlignment: Text.AlignHCenter
+      verticalAlignment: Text.AlignVCenter
+      wrapMode: Text.WordWrap
+      elide: Text.ElideRight
+      maximumLineCount: 2
+    }
+
+    MouseArea {
+      id: tileMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: tile.picked(tile.tileId)
+    }
+  }
+
+  // A line of fake text: a rounded bar whose width looks like a sentence.
+  component Scribble: Rectangle {
+    property int seed: 0
+    property real maxWidth: 100
+    property bool prompt: false
+    height: Style.space(5)
+    radius: height / 2
+    width: Math.round(maxWidth * (0.25 + 0.7 * Model.noise(seed)))
+    color: Qt.alpha(root.foreground, prompt ? 0.5 : 0.28)
+  }
+
   // ------------------------------------------------------------ popup
 
   KeyboardPanel {
@@ -534,8 +608,8 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(440))
-    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(820))
+    contentWidth: panel.fittedContentWidth(Style.space(790))
+    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(640))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -552,113 +626,471 @@ Panel {
       }
       onActivateRequested: if (root.cursorActive) root.activateCursor()
 
-      ScrollView {
-        id: scrollArea
-        anchors.fill: parent
-        clip: true
-        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-        ScrollBar.vertical.policy: panelColumn.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+      Column {
+        id: panelColumn
+        width: parent.width
+        spacing: Style.space(10)
 
-        Binding {
-          target: scrollArea.contentItem
-          property: "interactive"
-          value: panelColumn.implicitHeight > scrollArea.height
+        // ---------- Hero ----------
+        PanelHero {
+          width: parent.width
+          title: "Vibekey"
+          meta: root.statusText
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          iconOpacity: root.connected ? 1 : 0.5
+
+          iconComponent: Component {
+            VibekeyIcon {
+              iconSize: Style.font.display
+              color: root.foreground
+              background: Color.popups.background
+            }
+          }
+
+          trailingControl: Component {
+            Text {
+              visible: text !== ""
+              text: Model.batteryGlyph(root.state ? root.state.battery : null)
+              color: root.state && root.state.battery && Number(root.state.battery.percent) <= 15 && root.state.battery.charging !== true ? root.urgent : root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.iconLarge
+            }
+          }
         }
 
+        PanelSeparator { foreground: root.foreground }
+
+        // ---------- Access / driver problems ----------
         Column {
-          id: panelColumn
-          width: scrollArea.availableWidth
-          spacing: Style.space(10)
+          width: parent.width
+          spacing: Style.space(8)
+          visible: root.accessDenied || !root.daemonRunning || root.saveError !== ""
 
-          // ---------- Hero ----------
-          PanelHero {
+          Text {
             width: parent.width
-            title: "Vibekey"
-            meta: root.statusText
+            visible: root.accessDenied
+            textFormat: Text.PlainText
+            text: "Linux only lets root read the Vibekey until a udev rule gives your login access. Installing it asks for your password once; no replug needed."
+            color: root.muted
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
+          }
+
+          Button {
+            visible: root.accessDenied
+            text: root.installingAccess ? "Waiting for password…" : "Grant device access"
+            iconText: "󰌾"  // nf-md-lock_open_variant
+            enabled: !root.installingAccess
+            bordered: true
             foreground: root.foreground
+            accent: root.accent
             fontFamily: root.fontFamily
-            iconOpacity: root.connected ? 1 : 0.5
-
-            iconComponent: Component {
-              VibekeyIcon {
-                iconSize: Style.font.display
-                color: root.foreground
-                background: Color.popups.background
-              }
-            }
-
-            trailingControl: Component {
-              Text {
-                visible: text !== ""
-                text: Model.batteryGlyph(root.state ? root.state.battery : null)
-                color: root.state && root.state.battery && Number(root.state.battery.percent) <= 15 && root.state.battery.charging !== true ? root.urgent : root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.iconLarge
-              }
-            }
+            onClicked: root.installAccess()
           }
 
-          PanelSeparator { foreground: root.foreground }
-
-          // ---------- Access / driver problems ----------
-          Column {
+          Text {
             width: parent.width
-            spacing: Style.space(8)
-            visible: root.accessDenied || !root.daemonRunning || root.saveError !== ""
+            visible: !root.daemonRunning
+            textFormat: Text.PlainText
+            text: "The driver is not running. It restarts by itself; check the shell log if this persists."
+            color: root.urgent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
+          }
 
-            Text {
-              width: parent.width
-              visible: root.accessDenied
-              textFormat: Text.PlainText
-              text: "Linux only lets root read the Vibekey until a udev rule gives your login access. Installing it asks for your password once; no replug needed."
-              color: root.muted
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              wrapMode: Text.WordWrap
+          Text {
+            width: parent.width
+            visible: root.saveError !== ""
+            textFormat: Text.PlainText
+            text: root.saveError
+            color: root.urgent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
+          }
+        }
+
+        // ---------- Body: simulator or picker on the left, the keypad on the right ----------
+        Row {
+          id: body
+          width: parent.width
+          spacing: Style.space(18)
+
+          Item {
+            id: leftPane
+            width: Style.space(350)
+            height: device.implicitHeight
+
+            // ----- The fake herdr window -----
+            Rectangle {
+              id: sim
+              anchors.fill: parent
+              visible: root.editing === ""
+              radius: Style.space(10)
+              color: Qt.alpha(root.foreground, 0.05)
+              border.width: Math.max(1, Style.space(1))
+              border.color: Qt.alpha(root.foreground, 0.22)
+              clip: true
+
+              readonly property real pad: Style.space(10)
+              readonly property real lineStep: Style.space(11)
+
+              // Title bar: window dots, a scribbled title, a recording light.
+              Item {
+                id: simTitle
+                x: sim.pad
+                y: 0
+                width: parent.width - sim.pad * 2
+                height: Style.space(24)
+
+                Row {
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(5)
+                  Repeater {
+                    model: 3
+                    Rectangle { width: Style.space(7); height: width; radius: width / 2; color: Qt.alpha(root.foreground, 0.3) }
+                  }
+                }
+
+                Scribble { anchors.centerIn: parent; seed: 99; maxWidth: parent.width * 0.4 }
+
+                Rectangle {
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Style.space(8)
+                  height: width
+                  radius: width / 2
+                  color: root.urgent
+                  opacity: root.simControl === "key1" ? 1 : 0
+                  Behavior on opacity { NumberAnimation { duration: 150 } }
+                }
+              }
+
+              Rectangle {
+                x: 0; y: simTitle.height
+                width: parent.width
+                height: Math.max(1, Style.space(1))
+                color: Qt.alpha(root.foreground, 0.15)
+              }
+
+              // Sidebar: the agents, one of them selected.
+              Column {
+                id: simSidebar
+                x: sim.pad
+                y: simTitle.height + Style.space(10)
+                width: Style.space(66)
+                spacing: Style.space(8)
+
+                Repeater {
+                  model: root.simAgents
+                  Rectangle {
+                    required property int index
+                    width: simSidebar.width
+                    height: Style.space(16)
+                    radius: Style.space(4)
+                    color: index === root.simAgent ? Qt.alpha(root.accent, 0.25) : "transparent"
+                    Behavior on color { ColorAnimation { duration: 150 } }
+                    Scribble {
+                      anchors.verticalCenter: parent.verticalCenter
+                      x: Style.space(6)
+                      seed: 300 + index
+                      maxWidth: parent.width - Style.space(12)
+                      prompt: index === root.simAgent
+                    }
+                  }
+                }
+              }
+
+              Rectangle {
+                x: simSidebar.x + simSidebar.width + sim.pad
+                y: simTitle.height
+                width: Math.max(1, Style.space(1))
+                height: parent.height - simTitle.height - simStatusBar.height
+                color: Qt.alpha(root.foreground, 0.15)
+              }
+
+              // Main pane: scribbled output that the knob scrolls.
+              Item {
+                id: simMain
+                x: simSidebar.x + simSidebar.width + sim.pad * 2
+                y: simTitle.height + Style.space(8)
+                width: parent.width - x - sim.pad
+                height: parent.height - y - simStatusBar.height - Style.space(6)
+                clip: true
+
+                readonly property int lineCount: 48
+                readonly property real total: lineCount * sim.lineStep
+                // Knob right scrolls up: earlier lines come down into view.
+                readonly property real wrapped: ((root.knobPosition * sim.lineStep) % total + total) % total
+
+                Item {
+                  y: -simMain.total + simMain.wrapped
+                  width: parent.width
+                  height: simMain.total * 2
+
+                  Repeater {
+                    model: simMain.lineCount * 2
+                    Item {
+                      required property int index
+                      readonly property int line: index % simMain.lineCount
+                      readonly property bool prompt: line % 9 === 0
+                      y: index * sim.lineStep
+                      width: parent.width
+                      height: sim.lineStep
+
+                      Rectangle {
+                        visible: parent.prompt
+                        x: 0
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Style.space(5)
+                        height: width
+                        radius: Style.space(1)
+                        color: root.accent
+                      }
+
+                      Scribble {
+                        x: parent.prompt ? Style.space(9) : (parent.line % 4 === 2 ? Style.space(12) : 0)
+                        anchors.verticalCenter: parent.verticalCenter
+                        seed: parent.line
+                        maxWidth: parent.width - x
+                        prompt: parent.prompt
+                      }
+                    }
+                  }
+                }
+              }
+
+              // Status line: what the last key did, or scribbles when idle.
+              Rectangle {
+                id: simStatusBar
+                x: 0
+                y: parent.height - height
+                width: parent.width
+                height: Style.space(22)
+                color: Qt.alpha(root.foreground, 0.07)
+
+                Row {
+                  anchors.verticalCenter: parent.verticalCenter
+                  x: sim.pad
+                  spacing: Style.space(8)
+                  visible: root.simStatus === ""
+                  Scribble { anchors.verticalCenter: parent.verticalCenter; seed: 501; maxWidth: Style.space(70) }
+                  Scribble { anchors.verticalCenter: parent.verticalCenter; seed: 502; maxWidth: Style.space(50) }
+                }
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  x: sim.pad
+                  width: parent.width - sim.pad * 2
+                  visible: root.simStatus !== ""
+                  textFormat: Text.PlainText
+                  text: root.simStatus
+                  color: root.accent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  elide: Text.ElideRight
+                }
+              }
             }
 
-            Button {
-              visible: root.accessDenied
-              text: root.installingAccess ? "Waiting for password…" : "Grant device access"
-              iconText: "󰌾"  // nf-md-lock_open_variant
-              enabled: !root.installingAccess
-              bordered: true
-              foreground: root.foreground
-              accent: root.accent
-              fontFamily: root.fontFamily
-              onClicked: root.installAccess()
-            }
+            // ----- The picker: tiles grouped by what they do -----
+            Item {
+              id: picker
+              anchors.fill: parent
+              visible: root.editing !== ""
 
-            Text {
-              width: parent.width
-              visible: !root.daemonRunning
-              textFormat: Text.PlainText
-              text: "The driver is not running. It restarts by itself; check the shell log if this persists."
-              color: root.urgent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              wrapMode: Text.WordWrap
-            }
+              readonly property bool knobTurn: root.editing === "knob_turn"
+              readonly property string currentMode: knobTurn ? root.knobTurnMode : root.editorMode
+              readonly property var entry: root.editing !== "" ? root.assigned[root.editing] : null
+              readonly property int columns: 3
+              readonly property real gap: Style.space(6)
 
-            Text {
-              width: parent.width
-              visible: root.saveError !== ""
-              textFormat: Text.PlainText
-              text: root.saveError
-              color: root.urgent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              wrapMode: Text.WordWrap
+              function tileWidth(rowWidth) {
+                return Math.floor((rowWidth - gap * (columns - 1)) / columns)
+              }
+
+              Column {
+                anchors.fill: parent
+                spacing: Style.space(6)
+
+                Item {
+                  width: parent.width
+                  height: Style.space(28)
+
+                  Column {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(1)
+                    Text {
+                      textFormat: Text.PlainText
+                      text: root.editing !== "" ? root.titleFor(root.editing).toUpperCase() : ""
+                      color: root.accent
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
+                      font.letterSpacing: 1
+                    }
+                    Text {
+                      textFormat: Text.PlainText
+                      text: root.learned !== "" ? root.learned : (root.editing !== "" ? root.hintFor(root.editing) : "")
+                      color: root.learned !== "" ? root.accent : root.faint
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
+                  }
+
+                  PanelActionButton {
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    iconText: "󰅖"  // close
+                    tooltipText: "Back (Esc)"
+                    foreground: root.muted
+                    hoverColor: root.foreground
+                    fontFamily: root.fontFamily
+                    onClicked: root.toggleEditor(root.editing)
+                  }
+                }
+
+                ScrollView {
+                  id: pickerScroll
+                  width: parent.width
+                  height: parent.height - y
+                  clip: true
+                  contentWidth: availableWidth
+                  ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                  Column {
+                    id: pickerColumn
+                    width: pickerScroll.availableWidth
+                    spacing: Style.space(8)
+
+                    // Knob turn: one group of modes.
+                    Column {
+                      width: parent.width
+                      spacing: Style.space(4)
+                      visible: picker.knobTurn
+
+                      PanelSectionHeader { text: "TURNING THE KNOB"; foreground: root.foreground; fontFamily: root.fontFamily }
+
+                      Flow {
+                        width: parent.width
+                        spacing: picker.gap
+                        Repeater {
+                          model: root.knobTurnOptions.filter(function(o) { return o.value !== "none" })
+                          Tile {
+                            required property var modelData
+                            width: picker.tileWidth(parent.width)
+                            tileId: modelData.value
+                            label: modelData.label
+                            selected: picker.currentMode === modelData.value
+                            onPicked: function(id) { root.saveKnobTurn(id) }
+                          }
+                        }
+                      }
+                    }
+
+                    // Keys and the knob press: every preset, grouped.
+                    Repeater {
+                      model: picker.knobTurn ? [] : Model.groupedPresets(root.presets)
+                      Column {
+                        required property var modelData
+                        width: pickerColumn.width
+                        spacing: Style.space(4)
+
+                        PanelSectionHeader { text: modelData.name.toUpperCase(); foreground: root.foreground; fontFamily: root.fontFamily }
+
+                        Flow {
+                          width: parent.width
+                          spacing: picker.gap
+                          Repeater {
+                            model: modelData.presets
+                            Tile {
+                              required property var modelData
+                              width: picker.tileWidth(parent.width)
+                              tileId: modelData.id
+                              label: modelData.label
+                              selected: picker.currentMode === modelData.id
+                              onPicked: function(id) { root.choosePreset(root.editing, id) }
+                            }
+                          }
+                        }
+                      }
+                    }
+
+                    // Custom: a shell command or a key combo of your own.
+                    Column {
+                      width: parent.width
+                      spacing: Style.space(6)
+                      visible: !picker.knobTurn
+
+                      PanelSectionHeader { text: "CUSTOM"; foreground: root.foreground; fontFamily: root.fontFamily }
+
+                      TextField {
+                        id: commandField
+                        width: parent.width
+                        placeholderText: "Shell command, Enter to save"
+                        text: picker.entry && picker.entry.command && !picker.entry.preset ? picker.entry.command : ""
+                        font.family: root.fontFamily
+                        foreground: root.foreground
+                        accent: root.accent
+                        onActiveFocusChanged: root.editorTyping = commandField.activeFocus || keysField.activeFocus
+                        Keys.onEscapePressed: root.toggleEditor(root.editing)
+                        onAccepted: root.saveButton(root.editing, Model.entryForCommand(text))
+                      }
+
+                      TextField {
+                        id: keysField
+                        width: parent.width
+                        placeholderText: "Key combo such as ctrl+shift+t, Enter to save"
+                        text: picker.entry && picker.entry.keys && !picker.entry.preset ? picker.entry.keys : ""
+                        font.family: root.fontFamily
+                        foreground: root.foreground
+                        accent: root.accent
+                        onActiveFocusChanged: root.editorTyping = commandField.activeFocus || keysField.activeFocus
+                        Keys.onEscapePressed: root.toggleEditor(root.editing)
+                        onAccepted: root.saveButton(root.editing, Model.entryForKeys(text))
+                      }
+
+                      Text {
+                        width: parent.width
+                        textFormat: Text.PlainText
+                        text: "Commands run through bash. Modifiers: ctrl, shift, alt, super; keys: letters, F1–F24, Return, Escape, Tab, Space…"
+                        color: root.faint
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                        wrapMode: Text.WordWrap
+                      }
+                    }
+
+                    Button {
+                      visible: root.editing !== "" && root.isAssigned(root.editing)
+                      text: "Clear assignment"
+                      bordered: true
+                      foreground: root.muted
+                      accent: root.accent
+                      fontFamily: root.fontFamily
+                      onClicked: {
+                        if (picker.knobTurn) root.saveKnobTurn("none")
+                        else root.saveButton(root.editing, null)
+                      }
+                    }
+                  }
+                }
+              }
             }
           }
 
-          // ---------- The keypad, with each control's assignment beside it ----------
+          // ----- The keypad, with each control's assignment beside it -----
           Item {
             id: device
-            width: parent.width
-            implicitHeight: body.height + Style.space(8)
+            width: body.width - leftPane.width - body.spacing
+            implicitHeight: deviceBody.height + Style.space(8)
+            height: implicitHeight
 
-            // Geometry of the drawing: the knob and three keys, top to bottom.
             readonly property real bodyWidth: Style.space(104)
             readonly property real bodyHeight: Style.space(318)
             readonly property real knobSize: Style.space(80)
@@ -668,16 +1100,15 @@ Panel {
             readonly property real keysTop: Style.space(150)
             readonly property real labelX: bodyWidth + Style.space(26)
             readonly property real knobRowStep: Style.space(22)
-            readonly property real knobEdge: body.x + bodyWidth / 2 + knobSize / 2
-            readonly property real keyEdge: body.x + bodyWidth / 2 + keySize / 2
+            readonly property real knobEdge: deviceBody.x + bodyWidth / 2 + knobSize / 2
+            readonly property real keyEdge: deviceBody.x + bodyWidth / 2 + keySize / 2
 
             function keyCenterY(index) {
               return keysTop + Style.space(10) + keySize / 2 + index * (keySize + keyGap)
             }
 
-            // The slab.
             Rectangle {
-              id: body
+              id: deviceBody
               x: Style.space(2)
               y: Style.space(4)
               width: device.bodyWidth
@@ -699,7 +1130,6 @@ Panel {
                 font.bold: true
               }
 
-              // Microphone grille.
               Row {
                 anchors.top: parent.top
                 anchors.topMargin: Style.space(26)
@@ -707,16 +1137,10 @@ Panel {
                 spacing: Style.space(5)
                 Repeater {
                   model: 6
-                  Rectangle {
-                    width: Style.space(4)
-                    height: Style.space(14)
-                    radius: width / 2
-                    color: Qt.alpha(root.foreground, 0.3)
-                  }
+                  Rectangle { width: Style.space(4); height: Style.space(14); radius: width / 2; color: Qt.alpha(root.foreground, 0.3) }
                 }
               }
 
-              // The knob: a ring with a position tick that turns with the real one.
               Rectangle {
                 id: knob
                 readonly property bool lit: root.isKnobTurn(root.flashing) || root.flashing === "knob"
@@ -742,7 +1166,6 @@ Panel {
                   color: knob.lit ? root.accent : Qt.alpha(root.foreground, 0.6)
                 }
 
-                // Faint detents so the turn is visible.
                 Repeater {
                   model: 12
                   Rectangle {
@@ -751,7 +1174,6 @@ Panel {
                     height: Style.space(4)
                     x: knob.width / 2 - width / 2
                     y: Style.space(5)
-                    transformOrigin: Item.Center
                     transform: Rotation { origin.x: width / 2; origin.y: knob.height / 2 - Style.space(5); angle: index * 30 }
                     color: Qt.alpha(root.foreground, 0.18)
                     visible: index !== 0
@@ -765,7 +1187,6 @@ Panel {
                 }
               }
 
-              // The knob centre marks a press.
               Rectangle {
                 x: (parent.width - width) / 2
                 y: device.knobCenterY - height / 2
@@ -776,7 +1197,6 @@ Panel {
                 Behavior on color { ColorAnimation { duration: 120 } }
               }
 
-              // Power switch on the edge.
               Rectangle {
                 x: parent.width - width / 2
                 y: device.knobCenterY - height / 2
@@ -786,7 +1206,6 @@ Panel {
                 color: Qt.alpha(root.foreground, 0.35)
               }
 
-              // The lit frame around the three keys.
               Rectangle {
                 x: (parent.width - width) / 2
                 y: device.keysTop
@@ -798,19 +1217,18 @@ Panel {
                 border.color: Qt.alpha(root.accent, 0.45)
               }
 
-              KeyCap { controlKey: "key1"; icon: "󰍬"; x: (parent.width - width) / 2; y: device.keyCenterY(0) - height / 2 }  // microphone
-              KeyCap { controlKey: "key2"; icon: "󰄬"; x: (parent.width - width) / 2; y: device.keyCenterY(1) - height / 2 }  // check
-              KeyCap { controlKey: "key3"; icon: "󰅖"; x: (parent.width - width) / 2; y: device.keyCenterY(2) - height / 2 }  // close
+              KeyCap { controlKey: "key1"; icon: "󰍬"; x: (parent.width - width) / 2; y: device.keyCenterY(0) - height / 2 }
+              KeyCap { controlKey: "key2"; icon: "󰄬"; x: (parent.width - width) / 2; y: device.keyCenterY(1) - height / 2 }
+              KeyCap { controlKey: "key3"; icon: "󰅖"; x: (parent.width - width) / 2; y: device.keyCenterY(2) - height / 2 }
             }
 
-            // Leader lines from the drawing to the labels.
             Repeater {
               model: [
-                { key: "knob_turn", y: body.y + device.knobCenterY - device.knobRowStep, from: device.knobEdge },
-                { key: "knob", y: body.y + device.knobCenterY + device.knobRowStep, from: device.knobEdge },
-                { key: "key1", y: body.y + device.keyCenterY(0), from: device.keyEdge },
-                { key: "key2", y: body.y + device.keyCenterY(1), from: device.keyEdge },
-                { key: "key3", y: body.y + device.keyCenterY(2), from: device.keyEdge }
+                { key: "knob_turn", y: deviceBody.y + device.knobCenterY - device.knobRowStep, from: device.knobEdge },
+                { key: "knob", y: deviceBody.y + device.knobCenterY + device.knobRowStep, from: device.knobEdge },
+                { key: "key1", y: deviceBody.y + device.keyCenterY(0), from: device.keyEdge },
+                { key: "key2", y: deviceBody.y + device.keyCenterY(1), from: device.keyEdge },
+                { key: "key3", y: deviceBody.y + device.keyCenterY(2), from: device.keyEdge }
               ]
               delegate: Rectangle {
                 required property var modelData
@@ -833,194 +1251,25 @@ Panel {
               }
             }
 
-            ControlLabel { controlKey: "knob_turn"; x: device.labelX; y: body.y + device.knobCenterY - device.knobRowStep - height / 2; width: device.width - device.labelX }
-            ControlLabel { controlKey: "knob";      x: device.labelX; y: body.y + device.knobCenterY + device.knobRowStep - height / 2; width: device.width - device.labelX }
-            ControlLabel { controlKey: "key1"; x: device.labelX; y: body.y + device.keyCenterY(0) - height / 2; width: device.width - device.labelX }
-            ControlLabel { controlKey: "key2"; x: device.labelX; y: body.y + device.keyCenterY(1) - height / 2; width: device.width - device.labelX }
-            ControlLabel { controlKey: "key3"; x: device.labelX; y: body.y + device.keyCenterY(2) - height / 2; width: device.width - device.labelX }
+            ControlLabel { controlKey: "knob_turn"; x: device.labelX; y: deviceBody.y + device.knobCenterY - device.knobRowStep - height / 2; width: device.width - device.labelX }
+            ControlLabel { controlKey: "knob";      x: device.labelX; y: deviceBody.y + device.knobCenterY + device.knobRowStep - height / 2; width: device.width - device.labelX }
+            ControlLabel { controlKey: "key1"; x: device.labelX; y: deviceBody.y + device.keyCenterY(0) - height / 2; width: device.width - device.labelX }
+            ControlLabel { controlKey: "key2"; x: device.labelX; y: deviceBody.y + device.keyCenterY(1) - height / 2; width: device.width - device.labelX }
+            ControlLabel { controlKey: "key3"; x: device.labelX; y: deviceBody.y + device.keyCenterY(2) - height / 2; width: device.width - device.labelX }
           }
+        }
 
-          Text {
-            width: parent.width
-            visible: root.connected
-            textFormat: Text.PlainText
-            text: "Preview: while this panel is open the Vibekey only lights up what you press. Click a control to change what it does."
-            color: root.faint
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            wrapMode: Text.WordWrap
-          }
-
-          // ---------- Editor for the chosen control ----------
-          Column {
-            id: editor
-            width: parent.width
-            spacing: Style.space(8)
-            visible: root.editing !== ""
-
-            PanelSeparator { foreground: root.foreground }
-
-            Item {
-              width: parent.width
-              implicitHeight: editHeader.implicitHeight
-
-              PanelSectionHeader {
-                id: editHeader
-                text: root.editing !== "" ? root.titleFor(root.editing).toUpperCase() : ""
-                foreground: root.accent
-                fontFamily: root.fontFamily
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-              }
-
-              Text {
-                textFormat: Text.PlainText
-                text: root.editing !== "" ? root.hintFor(root.editing) : ""
-                color: root.faint
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                anchors.right: parent.right
-                anchors.rightMargin: Style.space(6)
-                anchors.verticalCenter: parent.verticalCenter
-              }
-            }
-
-            Text {
-              width: parent.width
-              visible: root.learned !== ""
-              textFormat: Text.PlainText
-              text: root.learned
-              color: root.accent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
-
-            Text {
-              width: parent.width
-              visible: ["key1", "key2", "key3", "knob"].indexOf(root.editing) !== -1 && root.learned === ""
-              textFormat: Text.PlainText
-              text: "Press this control on the Vibekey now if it does not light up on its own: it will be learned."
-              color: root.faint
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
-
-            // The knob turn: pick what turning does; both directions follow.
-            SearchableDropdown {
-              width: parent.width
-              visible: root.editing === "knob_turn"
-              label: "Turning the knob"
-              showLabel: false
-              placeholderText: "Search…"
-              fontFamily: root.fontFamily
-              id: knobTurnDropdown
-              options: root.knobTurnOptions
-              value: root.knobTurnMode
-              onChanged: function(value) {
-                root.saveKnobTurn(value)
-                knobTurnDropdown.value = Qt.binding(function() { return root.knobTurnMode })
-              }
-            }
-
-            SearchableDropdown {
-              width: parent.width
-              visible: root.editing !== "" && root.editing !== "knob_turn"
-              label: "Action"
-              showLabel: false
-              placeholderText: "Search actions…"
-              fontFamily: root.fontFamily
-              id: actionDropdown
-              options: root.editorOptions
-              value: root.editorMode
-              onChanged: function(value) {
-                root.chooseMode(root.editing, value)
-                actionDropdown.value = Qt.binding(function() { return root.editorMode })
-              }
-            }
-
-            TextField {
-              id: commandField
-              width: parent.width
-              visible: root.editorMode === "custom"
-              placeholderText: "Shell command, e.g. omarchy toggle nightlight"
-              text: root.editing !== "" && root.assigned[root.editing] && root.assigned[root.editing].command ? root.assigned[root.editing].command : ""
-              font.family: root.fontFamily
-              foreground: root.foreground
-              accent: root.accent
-              onVisibleChanged: if (visible) Qt.callLater(function() { commandField.forceActiveFocus() })
-              Keys.onEscapePressed: root.toggleEditor(root.editing)
-              onAccepted: {
-                root.draftMode = ""
-                root.saveButton(root.editing, Model.entryForCommand(text))
-              }
-            }
-
-            TextField {
-              id: keysField
-              width: parent.width
-              visible: root.editorMode === "keys"
-              placeholderText: "Key combo, e.g. ctrl+shift+t or Return"
-              text: root.editing !== "" && root.assigned[root.editing] && root.assigned[root.editing].keys ? root.assigned[root.editing].keys : ""
-              font.family: root.fontFamily
-              foreground: root.foreground
-              accent: root.accent
-              onVisibleChanged: if (visible) Qt.callLater(function() { keysField.forceActiveFocus() })
-              Keys.onEscapePressed: root.toggleEditor(root.editing)
-              onAccepted: {
-                root.draftMode = ""
-                root.saveButton(root.editing, Model.entryForKeys(text))
-              }
-            }
-
-            Row {
-              width: parent.width
-              visible: root.editorTyping
-              spacing: Style.space(10)
-
-              Button {
-                id: saveButton
-                text: "Save"
-                bordered: true
-                foreground: root.foreground
-                accent: root.accent
-                fontFamily: root.fontFamily
-                onClicked: {
-                  root.draftMode = ""
-                  if (root.editorMode === "custom") root.saveButton(root.editing, Model.entryForCommand(commandField.text))
-                  else root.saveButton(root.editing, Model.entryForKeys(keysField.text))
-                }
-              }
-
-              Text {
-                anchors.verticalCenter: parent.verticalCenter
-                width: parent.width - saveButton.width - parent.spacing
-                textFormat: Text.PlainText
-                text: root.editorMode === "keys"
-                  ? "Modifiers: ctrl, shift, alt, super. Keys: letters, F1–F24, Return, Escape, Tab, Space…"
-                  : "Runs through bash with your session environment."
-                color: root.muted
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                wrapMode: Text.WordWrap
-              }
-            }
-          }
-
-          Text {
-            width: parent.width
-            textFormat: Text.PlainText
-            text: root.state && root.state.last && root.state.last.label
-              ? "Last: " + root.state.last.label
-                + (root.state.last.preview ? "  (preview, not run)" : (root.state.last.action ? "  →  " + root.state.last.action : "  (nothing assigned)"))
-              : ""
-            visible: text !== ""
-            color: root.muted
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            elide: Text.ElideRight
-          }
+        Text {
+          width: parent.width
+          visible: root.connected
+          textFormat: Text.PlainText
+          text: root.editing === ""
+            ? "Preview: while this panel is open the Vibekey only acts in the window on the left. Click a control to change what it does."
+            : (root.editing === "knob_turn" ? "Both directions follow the choice." : "Press this control on the Vibekey now if it does not light up on its own: it will be learned.")
+          color: root.faint
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
         }
       }
     }

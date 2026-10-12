@@ -33,15 +33,17 @@ into `~/.config/omarchy/plugins/`, enables it and installs the rule.
 
 ## Using it
 
-- Open the panel from the bar icon. It draws the keypad with each control's
-  assignment beside it. While the panel is open the keypad is in **preview**:
-  pressing a key or turning the knob only lights that control up in the drawing,
-  nothing runs, and the drawn knob turns with the real one.
-- Click a control (on the drawing or its label) to change it. Keys and the knob
-  press take an action: dictation (push-to-talk via voxtype), Omarchy menus and
-  panels, volume and media, screenshots, workspaces, a plain key press such as
-  Enter, a **custom command** through bash, or a **key combo** such as
-  `ctrl+shift+t`.
+- Open the panel from the bar icon. On the right it draws the keypad with each
+  control's assignment beside it; on the left a small mock herdr window with
+  scribbled text. While the panel is open the keypad is in **preview**: nothing
+  runs, the knob scrolls the mock window, the drawn knob turns with the real
+  one, and a key press lights its control and shows its action in the mock
+  window's status line.
+- Click a control (on the drawing or its label) and the mock window gives way
+  to a picker of grouped tiles: dictation (push-to-talk via voxtype), plain
+  keys such as Enter, herdr, apps, Omarchy menus and panels, sound, screen,
+  windows. At the bottom, a **custom command** through bash or a **key combo**
+  such as `ctrl+shift+t`; Escape or the × goes back.
 - **Turn knob** is one setting for both directions. The first choice, *Scroll*,
   lets the knob's own mouse-wheel reports through, so it scrolls like a wheel.
   The others pair the directions: volume, brightness, workspaces, agents in

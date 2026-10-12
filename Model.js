@@ -213,6 +213,30 @@ function aliasOf(config, rawId) {
   return aliases[rawId] ? String(aliases[rawId]) : "none"
 }
 
+// Presets by group, in catalogue order: [{ name, presets: [...] }].
+function groupedPresets(presets) {
+  var groups = [], index = {}
+  if (!Array.isArray(presets)) return groups
+  for (var i = 0; i < presets.length; i++) {
+    var preset = presets[i]
+    if (!preset || !preset.id) continue
+    var name = String(preset.group || "Other")
+    if (index[name] === undefined) {
+      index[name] = groups.length
+      groups.push({ name: name, presets: [] })
+    }
+    groups[index[name]].presets.push(preset)
+  }
+  return groups
+}
+
+// Deterministic pseudo-random in [0, 1) for the scribble lines, so the fake
+// text looks the same every time the panel opens.
+function noise(seed) {
+  var x = Math.sin(seed * 12.9898 + 78.233) * 43758.5453
+  return x - Math.floor(x)
+}
+
 function statusText(state, daemonRunning) {
   if (!isObject(state)) return daemonRunning ? "Starting driver…" : "Driver not running"
   if (state.access === "denied") return "Needs device access"
