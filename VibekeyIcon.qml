@@ -1,70 +1,58 @@
 import QtQuick
 
-// The top of the Vibekey as a glyph, inverted: a solid slab with the
-// microphone grille and the knob (ring and dot) cut out of it in the
-// background colour. Square top, sides running off the bottom edge.
+// The Vibekey as a glyph: four microphone grille lines above the knob, a
+// ring with a dot in the middle. Drawn with rectangles so it stays crisp at
+// bar size.
 Item {
   id: root
 
   property real iconSize: 16
   property color color: "white"
-  property color background: "black"
+  property color background: "transparent"  // unused; kept so callers need not change
 
-  // The keypad is a tall slab: narrower than it is high.
-  readonly property real bodyWidth: Math.round(iconSize * 0.8)
-  readonly property real stroke: Math.max(1, Math.round(iconSize / 14))
-  readonly property real grilleTop: Math.round(iconSize * 0.16)
-  readonly property real grilleHeight: Math.max(2, Math.round(iconSize * 0.18))
-  readonly property real ringSize: Math.round(bodyWidth * 0.66)
-  readonly property real ringTop: Math.round(iconSize * 0.44)
-  readonly property color cut: Qt.rgba(background.r, background.g, background.b, 1)
-
-  width: bodyWidth
+  width: iconSize
   height: iconSize
-  implicitWidth: bodyWidth
+  implicitWidth: iconSize
   implicitHeight: iconSize
 
-  // The slab.
-  Rectangle {
-    anchors.fill: parent
-    color: root.color
-  }
+  readonly property real stroke: Math.max(1, Math.round(iconSize / 11))
+  readonly property real grilleHeight: Math.round(iconSize * 0.2)
+  readonly property real ringSize: Math.round(iconSize * 0.66)
 
-  // Grille: four short slots under the top edge.
+  // Grille: four short bars across the top.
   Row {
     anchors.top: parent.top
-    anchors.topMargin: root.grilleTop
     anchors.horizontalCenter: parent.horizontalCenter
-    spacing: Math.max(1, Math.round(root.iconSize / 14))
+    spacing: Math.max(1, Math.round(root.iconSize / 9))
     Repeater {
       model: 4
       Rectangle {
         width: root.stroke
         height: root.grilleHeight
         radius: width / 2
-        color: root.cut
+        color: root.color
       }
     }
   }
 
-  // Knob: a ring cut out, with a dot cut out of its middle.
+  // Knob: a ring with a dot in the middle.
   Rectangle {
-    y: root.ringTop
+    anchors.bottom: parent.bottom
     anchors.horizontalCenter: parent.horizontalCenter
     width: root.ringSize
     height: root.ringSize
     radius: width / 2
     color: "transparent"
     border.width: root.stroke
-    border.color: root.cut
+    border.color: root.color
     antialiasing: true
 
     Rectangle {
       anchors.centerIn: parent
-      width: Math.max(2, Math.round(root.ringSize * 0.3))
+      width: Math.max(2, Math.round(root.ringSize * 0.28))
       height: width
       radius: width / 2
-      color: root.cut
+      color: root.color
       antialiasing: true
     }
   }
