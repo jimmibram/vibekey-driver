@@ -49,7 +49,6 @@ Panel {
   readonly property bool accessDenied: state.access === "denied"
   readonly property var assigned: Model.buttons(config)
   readonly property var rows: Model.controls(config, seen, presets)
-  readonly property var extras: rows.filter(function(r) { return r.extra })
   readonly property var editorOptions: Model.editorOptions(presets)
   readonly property var knobTurnOptions: Model.knobTurnOptions(knobPresets)
   readonly property string knobTurnMode: Model.knobTurnMode(config, knobPresets)
@@ -103,7 +102,7 @@ Panel {
   // Keyboard cursor over the controls (j/k, Enter opens the editor).
   property bool cursorActive: false
   property int cursorIndex: 0
-  readonly property var cursorKeys: slotOrder.concat(extras.map(function(r) { return r.key }))
+  readonly property var cursorKeys: slotOrder
 
   // ------------------------------------------------------------ data files
 
@@ -286,22 +285,6 @@ Panel {
     if (mode === "custom" || mode === "keys") { root.draftMode = mode; return }
     root.draftMode = ""
     root.saveButton(key, Model.entryForPreset(Model.presetById(root.presets, mode)))
-  }
-
-  readonly property bool editingExtra: root.editing !== "" && root.slotOrder.indexOf(root.editing) === -1
-
-  function setAlias(rawId, slot) {
-    root.runConfig(["alias", rawId, slot])
-    if (slot !== "none") {
-      root.learned = root.titleFor(slot) + " now answers to " + root.titleFor(rawId)
-      root.editing = slot
-    }
-  }
-
-  function forgetControl(rawId) {
-    root.runConfig(["forget", rawId])
-    root.editing = ""
-    Qt.callLater(function() { seenFile.reload() })
   }
 
   readonly property string editorMode: root.editing === "" || root.editing === "knob_turn"
@@ -817,29 +800,6 @@ Panel {
             wrapMode: Text.WordWrap
           }
 
-          // ---------- Controls remapped in firmware (rare) ----------
-          Column {
-            width: parent.width
-            spacing: Style.space(4)
-            visible: root.extras.length > 0
-
-            PanelSectionHeader {
-              text: "ALSO SEEN"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-            }
-
-            Repeater {
-              model: root.extras
-              delegate: ControlLabel {
-                required property var modelData
-                controlKey: modelData.key
-                compact: true
-                width: panelColumn.width
-              }
-            }
-          }
-
           // ---------- Editor for the chosen control ----------
           Column {
             id: editor
@@ -894,36 +854,6 @@ Panel {
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
               wrapMode: Text.WordWrap
-            }
-
-            // A control the firmware sends under its own code: say which key it is.
-            Row {
-              width: parent.width
-              visible: root.editingExtra
-              spacing: Style.space(10)
-
-              Dropdown {
-                id: slotPicker
-                width: parent.width - forgetButton.width - parent.spacing
-                label: "This is the"
-                showLabel: false
-                fontFamily: root.fontFamily
-                options: Model.slotOptions()
-                value: root.editingExtra ? Model.aliasOf(root.config, root.editing) : "none"
-                onChanged: function(value) { root.setAlias(root.editing, value) }
-              }
-
-              Button {
-                id: forgetButton
-                anchors.verticalCenter: parent.verticalCenter
-                text: "Forget"
-                tooltipText: "Drop it from this list"
-                bordered: true
-                foreground: root.foreground
-                accent: root.accent
-                fontFamily: root.fontFamily
-                onClicked: root.forgetControl(root.editing)
-              }
             }
 
             // The knob turn: pick what turning does; both directions follow.

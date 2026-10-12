@@ -57,11 +57,9 @@ Push-to-talk works because the daemon sees key releases too: a preset may carry 
 ### A keypad remapped with Ulanzi Studio
 
 The six controls are recognised by what they send from the factory. If you have
-changed a key in Ulanzi Studio, it shows up under **Also seen** with its raw code.
-Click the key you mean in the drawing and press it on the keypad: it is learned
-and from then on counts as that key. That also fixes a keypad whose keys send
-each other's factory codes. Or open the raw entry and pick which key it
-is. Learned mappings are `aliases` in the config file.
+changed a key in Ulanzi Studio, click the key you mean in the drawing and press
+it on the keypad: it is learned and from then on counts as that key. Learned
+mappings are `aliases` in the config file.
 
 ## Flipping between agents in herdr
 
@@ -85,7 +83,7 @@ between herdr workspaces instead; with no herdr open it just says so.
 - The six controls are identified by what they send from the factory: Voice
   key = HID usage `0x01`, ✓ = Enter, ✕ = Escape, knob press = PrintScreen, knob
   turn = mouse wheel (or Right/Backspace on some firmware). Anything else is a raw
-  id you can learn as one of the six, or assign on its own.
+  id you can learn as one of the six.
 - While the panel is open it heartbeats `$XDG_RUNTIME_DIR/vibekey/preview`; the
   daemon then reports controls without running them and holds the wheel back.
 - Assignments live in `~/.config/omarchy/vibekey/config.json`:
