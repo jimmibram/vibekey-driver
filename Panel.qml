@@ -955,7 +955,8 @@ Panel {
                 readonly property real pad: Style.space(10)
                 readonly property real titleH: Style.space(24)
                 readonly property int cols: 7
-                readonly property int rows: 4
+                // Each level adds a row of boxes, up to six, and some speed.
+                readonly property int rows: Math.min(6, 3 + level)
                 readonly property real boxGap: Style.space(4)
                 readonly property real boxH: Style.space(14)
                 readonly property real boxTop: titleH + Style.space(12)
@@ -965,32 +966,48 @@ Panel {
                 readonly property real paddleY: height - Style.space(18)
                 readonly property real notch: Style.space(10)   // paddle travel per knob click
                 readonly property real ballR: Style.space(6)
-                readonly property real speed: Style.spaceReal(190) // per second
+                readonly property real speed: Style.spaceReal(190) * (1 + 0.12 * (level - 1)) // per second
                 readonly property var icons: ({ key1: "\u{F036C}", key2: "\u{F012C}", key3: "\u{F0156}" })
 
                 property var alive: []
                 property int boxesLeft: 0
                 property int shots: 0
+                property int level: 1
+                property int score: 0
+                property int lastBonus: 0
                 property int knobBase: 0
                 property real lastTick: 0
                 // The knob's running notch count, measured from where the game started.
                 readonly property real paddleX: Math.max(0, Math.min(width - paddleW,
                   (width - paddleW) / 2 + (root.knobPosition - knobBase) * notch))
 
+                // A fresh game from level one.
                 function reset() {
+                  level = 1
+                  score = 0
+                  newRound()
+                }
+
+                function newRound() {
                   var a = []
                   for (var i = 0; i < cols * rows; i++) a.push(true)
                   alive = a
                   boxesLeft = cols * rows
                   shots = 0
+                  lastBonus = 0
                   balls.clear()
                   knobBase = root.knobPosition
                   lastTick = 0
                 }
 
+                // Points per box: the top row pays most, and every level pays more.
+                function pointsFor(index) {
+                  return 10 * (rows - Math.floor(index / cols)) * level
+                }
+
                 // key1 fires up-left, key2 straight up, key3 up-right.
                 function fire(key) {
-                  if (boxesLeft === 0) { reset(); return }
+                  if (boxesLeft === 0) { level++; newRound(); return }
                   var a = (key === "key1" ? -30 : key === "key3" ? 30 : 0) * Math.PI / 180
                   balls.append({
                     x: paddleX + paddleW / 2, y: paddleY - ballR - 1,
@@ -1027,6 +1044,12 @@ Panel {
                         var by = boxTop + Math.floor(k / cols) * (boxH + boxGap)
                         if (x + r <= bx || x - r >= bx + boxW || y + r <= by || y - r >= by + boxH) continue
                         alive[k] = false; boxesLeft--; hit = true
+                        score += pointsFor(k)
+                        if (boxesLeft === 0) {
+                          // Clearing pays a bonus that shrinks with every shot it took.
+                          lastBonus = Math.max(0, 100 * level - 10 * (shots - 1))
+                          score += lastBonus
+                        }
                         var ox = Math.min(x + r - bx, bx + boxW - (x - r))
                         var oy = Math.min(y + r - by, by + boxH - (y - r))
                         if (ox < oy) { vx = -vx; x += vx > 0 ? ox : -ox }
@@ -1069,7 +1092,7 @@ Panel {
                   Text {
                     anchors.centerIn: parent
                     textFormat: Text.PlainText
-                    text: "BOXES"
+                    text: "LEVEL " + game.level
                     color: root.faint
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
@@ -1080,10 +1103,11 @@ Panel {
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
                     textFormat: Text.PlainText
-                    text: game.boxesLeft + " left · " + game.shots + (game.shots === 1 ? " shot" : " shots")
-                    color: root.muted
+                    text: game.score + " pts"
+                    color: root.foreground
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
+                    font.bold: true
                   }
                 }
 
@@ -1103,7 +1127,8 @@ Panel {
                     width: game.boxW
                     height: game.boxH
                     radius: Style.space(3)
-                    color: Qt.alpha(root.accent, 0.9 - Math.floor(index / game.cols) * 0.18)
+                    // Like the window's scribbles: foreground, fading row by row.
+                    color: Qt.alpha(root.foreground, 0.5 - Math.floor(index / game.cols) * 0.06)
                     opacity: game.alive[index] ? 1 : 0
                     scale: game.alive[index] ? 1 : 1.6
                     Behavior on opacity { NumberAnimation { duration: 180 } }
@@ -1148,8 +1173,11 @@ Panel {
                   visible: balls.count === 0
                   textFormat: Text.PlainText
                   text: game.boxesLeft === 0
-                    ? "Cleared in " + game.shots + " shots. Press any key for another round."
-                    : "Turn the knob to move the bar, press a key to fire. The knob press starts over; a click turns the window back."
+                    ? "Level " + game.level + " cleared in " + game.shots + (game.shots === 1 ? " shot" : " shots")
+                      + (game.lastBonus > 0 ? ", +" + game.lastBonus + " bonus" : "") + ". Press a key for level " + (game.level + 1) + "."
+                    : (game.score === 0 && game.level === 1
+                      ? "Turn the knob to move the bar, press a key to fire. The knob press starts over; a click turns the window back."
+                      : game.boxesLeft + " to go. Press a key to fire.")
                   color: root.faint
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
