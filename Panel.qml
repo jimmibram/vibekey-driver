@@ -457,7 +457,7 @@ Panel {
     active: root.accessDenied
     activeColor: root.urgent
     opacity: root.connected || root.accessDenied ? 1 : 0.55
-    tooltipText: Model.tooltip(root.state, root.daemonRunning, root.rows)
+    tooltipText: Model.tooltip(root.state, root.daemonRunning, root.slotOrder.filter(root.isAssigned).length, root.slotOrder.length)
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.RightButton) root.refreshFiles()
       else root.toggle()

@@ -260,13 +260,11 @@ function batteryGlyph(battery) {
   return steps[index]
 }
 
-function tooltip(state, daemonRunning, rows) {
+function tooltip(state, daemonRunning, assigned, total) {
   var lines = ["Vibekey · " + statusText(state, daemonRunning)]
   if (isObject(state) && isObject(state.last) && state.last.label) {
     lines.push("Last: " + state.last.label + (state.last.action ? " → " + state.last.action : ""))
   }
-  var assigned = 0
-  for (var i = 0; i < rows.length; i++) if (rows[i].entry) assigned++
-  lines.push(assigned + " of " + rows.length + " controls assigned")
+  lines.push(assigned + " of " + total + " controls assigned")
   return lines.join("\n")
 }
