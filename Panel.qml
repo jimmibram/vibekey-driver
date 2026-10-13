@@ -115,7 +115,15 @@ Panel {
   readonly property int simAgents: 5
   readonly property int knobPosition: Number(state.knob_position || 0)
 
+  // The window's back: a game of boxes, driven by the real keypad.
+  property bool gameOn: false
+
   function simulate(key) {
+    if (root.gameOn) {
+      if (key === "knob") game.reset()
+      else if (key === "key1" || key === "key2" || key === "key3") game.fire(key)
+      return
+    }
     if (key === "knob_right" || key === "knob_left") return  // the scroll itself shows
     root.simControl = key
     root.simStatus = root.summaryFor(key)
@@ -360,6 +368,7 @@ Panel {
       Qt.callLater(function() { keyCatcher.forceActiveFocus() })
     } else {
       root.editing = ""
+      root.gameOn = false
       root.writePreview("closed")
     }
   }
@@ -563,6 +572,22 @@ Panel {
     accent: root.accent
     outline: selected
 
+    // Opening the editor for a control whose preset sits far down the
+    // list: bring that tile into view.
+    onSelectedChanged: if (selected) picker.reveal(tile)
+    Component.onCompleted: if (selected) picker.reveal(tile)
+
+    // A faint resting outline so the tiles read as buttons, not loose text.
+    // Hover and selection paint their own border, so this one steps aside.
+    Rectangle {
+      anchors.fill: parent
+      radius: tile.radius
+      color: "transparent"
+      border.width: Style.hairline
+      border.color: Qt.alpha(root.foreground, 0.16)
+      visible: !tile.hasCursor && !tile.selected
+    }
+
     Text {
       anchors.fill: parent
       anchors.margins: Style.space(6)
@@ -724,175 +749,418 @@ Panel {
             width: Style.space(350)
             height: device.implicitHeight
 
-            // ----- The fake herdr window -----
-            Rectangle {
-              id: sim
+            // ----- The fake herdr window, with a game on its back -----
+            // A click on the window flips it over: the knob drives a paddle,
+            // the three keys fire balls carrying their own symbols, and the
+            // boxes along the top are there to be broken.
+            Flipable {
+              id: flip
               anchors.fill: parent
               visible: root.editing === ""
-              radius: Style.space(10)
-              color: Qt.alpha(root.foreground, 0.05)
-              border.width: Math.max(1, Style.space(1))
-              border.color: Qt.alpha(root.foreground, 0.22)
-              clip: true
 
-              readonly property real pad: Style.space(10)
-              readonly property real lineStep: Style.space(11)
-
-              // Title bar: window dots, a scribbled title, a recording light.
-              Item {
-                id: simTitle
-                x: sim.pad
-                y: 0
-                width: parent.width - sim.pad * 2
-                height: Style.space(24)
-
-                Row {
-                  anchors.verticalCenter: parent.verticalCenter
-                  spacing: Style.space(5)
-                  Repeater {
-                    model: 3
-                    Rectangle { width: Style.space(7); height: width; radius: width / 2; color: Qt.alpha(root.foreground, 0.3) }
-                  }
-                }
-
-                Scribble { anchors.centerIn: parent; seed: 99; maxWidth: parent.width * 0.4 }
-
-                Rectangle {
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  width: Style.space(8)
-                  height: width
-                  radius: width / 2
-                  color: root.urgent
-                  opacity: root.simControl === "key1" ? 1 : 0
-                  Behavior on opacity { NumberAnimation { duration: 150 } }
-                }
+              transform: Rotation {
+                origin.x: flip.width / 2
+                origin.y: flip.height / 2
+                axis { x: 0; y: 1; z: 0 }
+                angle: root.gameOn ? 180 : 0
+                Behavior on angle { NumberAnimation { duration: 450; easing.type: Easing.InOutQuad } }
               }
 
-              Rectangle {
-                x: 0; y: simTitle.height
-                width: parent.width
-                height: Math.max(1, Style.space(1))
-                color: Qt.alpha(root.foreground, 0.15)
-              }
-
-              // Sidebar: the agents, one of them selected.
-              Column {
-                id: simSidebar
-                x: sim.pad
-                y: simTitle.height + Style.space(10)
-                width: Style.space(66)
-                spacing: Style.space(8)
-
-                Repeater {
-                  model: root.simAgents
-                  Rectangle {
-                    required property int index
-                    width: simSidebar.width
-                    height: Style.space(16)
-                    radius: Style.space(4)
-                    color: index === root.simAgent ? Qt.alpha(root.accent, 0.25) : "transparent"
-                    Behavior on color { ColorAnimation { duration: 150 } }
-                    Scribble {
-                      anchors.verticalCenter: parent.verticalCenter
-                      x: Style.space(6)
-                      seed: 300 + index
-                      maxWidth: parent.width - Style.space(12)
-                      prompt: index === root.simAgent
-                    }
-                  }
-                }
-              }
-
-              Rectangle {
-                x: simSidebar.x + simSidebar.width + sim.pad
-                y: simTitle.height
-                width: Math.max(1, Style.space(1))
-                height: parent.height - simTitle.height - simStatusBar.height
-                color: Qt.alpha(root.foreground, 0.15)
-              }
-
-              // Main pane: scribbled output that the knob scrolls.
-              Item {
-                id: simMain
-                x: simSidebar.x + simSidebar.width + sim.pad * 2
-                y: simTitle.height + Style.space(8)
-                width: parent.width - x - sim.pad
-                height: parent.height - y - simStatusBar.height - Style.space(6)
+              front: Rectangle {
+                id: sim
+                anchors.fill: parent
+                radius: Style.space(10)
+                color: Qt.alpha(root.foreground, 0.05)
+                border.width: Math.max(1, Style.space(1))
+                border.color: Qt.alpha(root.foreground, 0.22)
                 clip: true
 
-                readonly property int lineCount: 48
-                readonly property real total: lineCount * sim.lineStep
-                // Knob right scrolls up: earlier lines come down into view.
-                readonly property real wrapped: ((root.knobPosition * sim.lineStep) % total + total) % total
+                readonly property real pad: Style.space(10)
+                readonly property real lineStep: Style.space(11)
 
+                // Title bar: window dots, a scribbled title, a recording light.
                 Item {
-                  y: -simMain.total + simMain.wrapped
+                  id: simTitle
+                  x: sim.pad
+                  y: 0
+                  width: parent.width - sim.pad * 2
+                  height: Style.space(24)
+
+                  Row {
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(5)
+                    Repeater {
+                      model: 3
+                      Rectangle { width: Style.space(7); height: width; radius: width / 2; color: Qt.alpha(root.foreground, 0.3) }
+                    }
+                  }
+
+                  Scribble { anchors.centerIn: parent; seed: 99; maxWidth: parent.width * 0.4 }
+
+                  Rectangle {
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(8)
+                    height: width
+                    radius: width / 2
+                    color: root.urgent
+                    opacity: root.simControl === "key1" ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: 150 } }
+                  }
+                }
+
+                Rectangle {
+                  x: 0; y: simTitle.height
                   width: parent.width
-                  height: simMain.total * 2
+                  height: Math.max(1, Style.space(1))
+                  color: Qt.alpha(root.foreground, 0.15)
+                }
+
+                // Sidebar: the agents, one of them selected.
+                Column {
+                  id: simSidebar
+                  x: sim.pad
+                  y: simTitle.height + Style.space(10)
+                  width: Style.space(66)
+                  spacing: Style.space(8)
 
                   Repeater {
-                    model: simMain.lineCount * 2
-                    Item {
+                    model: root.simAgents
+                    Rectangle {
                       required property int index
-                      readonly property int line: index % simMain.lineCount
-                      readonly property bool prompt: line % 9 === 0
-                      y: index * sim.lineStep
-                      width: parent.width
-                      height: sim.lineStep
-
-                      Rectangle {
-                        visible: parent.prompt
-                        x: 0
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: Style.space(5)
-                        height: width
-                        radius: Style.space(1)
-                        color: root.accent
-                      }
-
+                      width: simSidebar.width
+                      height: Style.space(16)
+                      radius: Style.space(4)
+                      color: index === root.simAgent ? Qt.alpha(root.accent, 0.25) : "transparent"
+                      Behavior on color { ColorAnimation { duration: 150 } }
                       Scribble {
-                        x: parent.prompt ? Style.space(9) : (parent.line % 4 === 2 ? Style.space(12) : 0)
                         anchors.verticalCenter: parent.verticalCenter
-                        seed: parent.line
-                        maxWidth: parent.width - x
-                        prompt: parent.prompt
+                        x: Style.space(6)
+                        seed: 300 + index
+                        maxWidth: parent.width - Style.space(12)
+                        prompt: index === root.simAgent
                       }
                     }
                   }
                 }
+
+                Rectangle {
+                  x: simSidebar.x + simSidebar.width + sim.pad
+                  y: simTitle.height
+                  width: Math.max(1, Style.space(1))
+                  height: parent.height - simTitle.height - simStatusBar.height
+                  color: Qt.alpha(root.foreground, 0.15)
+                }
+
+                // Main pane: scribbled output that the knob scrolls.
+                Item {
+                  id: simMain
+                  x: simSidebar.x + simSidebar.width + sim.pad * 2
+                  y: simTitle.height + Style.space(8)
+                  width: parent.width - x - sim.pad
+                  height: parent.height - y - simStatusBar.height - Style.space(6)
+                  clip: true
+
+                  readonly property int lineCount: 48
+                  readonly property real total: lineCount * sim.lineStep
+                  // Knob right scrolls up: earlier lines come down into view.
+                  readonly property real wrapped: ((root.knobPosition * sim.lineStep) % total + total) % total
+
+                  Item {
+                    y: -simMain.total + simMain.wrapped
+                    width: parent.width
+                    height: simMain.total * 2
+
+                    Repeater {
+                      model: simMain.lineCount * 2
+                      Item {
+                        required property int index
+                        readonly property int line: index % simMain.lineCount
+                        readonly property bool prompt: line % 9 === 0
+                        y: index * sim.lineStep
+                        width: parent.width
+                        height: sim.lineStep
+
+                        Rectangle {
+                          visible: parent.prompt
+                          x: 0
+                          anchors.verticalCenter: parent.verticalCenter
+                          width: Style.space(5)
+                          height: width
+                          radius: Style.space(1)
+                          color: root.accent
+                        }
+
+                        Scribble {
+                          x: parent.prompt ? Style.space(9) : (parent.line % 4 === 2 ? Style.space(12) : 0)
+                          anchors.verticalCenter: parent.verticalCenter
+                          seed: parent.line
+                          maxWidth: parent.width - x
+                          prompt: parent.prompt
+                        }
+                      }
+                    }
+                  }
+                }
+
+                // Status line: what the last key did, or scribbles when idle.
+                Rectangle {
+                  id: simStatusBar
+                  x: 0
+                  y: parent.height - height
+                  width: parent.width
+                  height: Style.space(22)
+                  color: Qt.alpha(root.foreground, 0.07)
+
+                  Row {
+                    anchors.verticalCenter: parent.verticalCenter
+                    x: sim.pad
+                    spacing: Style.space(8)
+                    visible: root.simStatus === ""
+                    Scribble { anchors.verticalCenter: parent.verticalCenter; seed: 501; maxWidth: Style.space(70) }
+                    Scribble { anchors.verticalCenter: parent.verticalCenter; seed: 502; maxWidth: Style.space(50) }
+                  }
+
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    x: sim.pad
+                    width: parent.width - sim.pad * 2
+                    visible: root.simStatus !== ""
+                    textFormat: Text.PlainText
+                    text: root.simStatus
+                    color: root.accent
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                    elide: Text.ElideRight
+                  }
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: { game.reset(); root.gameOn = true }
+                }
               }
 
-              // Status line: what the last key did, or scribbles when idle.
-              Rectangle {
-                id: simStatusBar
-                x: 0
-                y: parent.height - height
-                width: parent.width
-                height: Style.space(22)
-                color: Qt.alpha(root.foreground, 0.07)
+              back: Rectangle {
+                id: game
+                anchors.fill: parent
+                radius: Style.space(10)
+                color: Qt.alpha(root.foreground, 0.05)
+                border.width: Math.max(1, Style.space(1))
+                border.color: Qt.alpha(root.foreground, 0.22)
+                clip: true
 
-                Row {
-                  anchors.verticalCenter: parent.verticalCenter
-                  x: sim.pad
-                  spacing: Style.space(8)
-                  visible: root.simStatus === ""
-                  Scribble { anchors.verticalCenter: parent.verticalCenter; seed: 501; maxWidth: Style.space(70) }
-                  Scribble { anchors.verticalCenter: parent.verticalCenter; seed: 502; maxWidth: Style.space(50) }
+                readonly property real pad: Style.space(10)
+                readonly property real titleH: Style.space(24)
+                readonly property int cols: 7
+                readonly property int rows: 4
+                readonly property real boxGap: Style.space(4)
+                readonly property real boxH: Style.space(14)
+                readonly property real boxTop: titleH + Style.space(12)
+                readonly property real boxW: (width - pad * 2 - boxGap * (cols - 1)) / cols
+                readonly property real paddleW: Style.space(60)
+                readonly property real paddleH: Style.space(6)
+                readonly property real paddleY: height - Style.space(18)
+                readonly property real notch: Style.space(10)   // paddle travel per knob click
+                readonly property real ballR: Style.space(6)
+                readonly property real speed: Style.spaceReal(190) // per second
+                readonly property var icons: ({ key1: "\u{F036C}", key2: "\u{F012C}", key3: "\u{F0156}" })
+
+                property var alive: []
+                property int boxesLeft: 0
+                property int shots: 0
+                property int knobBase: 0
+                property real lastTick: 0
+                // The knob's running notch count, measured from where the game started.
+                readonly property real paddleX: Math.max(0, Math.min(width - paddleW,
+                  (width - paddleW) / 2 + (root.knobPosition - knobBase) * notch))
+
+                function reset() {
+                  var a = []
+                  for (var i = 0; i < cols * rows; i++) a.push(true)
+                  alive = a
+                  boxesLeft = cols * rows
+                  shots = 0
+                  balls.clear()
+                  knobBase = root.knobPosition
+                  lastTick = 0
+                }
+
+                // key1 fires up-left, key2 straight up, key3 up-right.
+                function fire(key) {
+                  if (boxesLeft === 0) { reset(); return }
+                  var a = (key === "key1" ? -30 : key === "key3" ? 30 : 0) * Math.PI / 180
+                  balls.append({
+                    x: paddleX + paddleW / 2, y: paddleY - ballR - 1,
+                    vx: speed * Math.sin(a), vy: -speed * Math.cos(a),
+                    icon: icons[key] || ""
+                  })
+                  shots++
+                }
+
+                function step() {
+                  var now = Date.now()
+                  var dt = lastTick > 0 ? Math.min(0.04, (now - lastTick) / 1000) : 0.016
+                  lastTick = now
+                  var r = ballR, hit = false
+                  for (var i = balls.count - 1; i >= 0; i--) {
+                    var b = balls.get(i)
+                    var x = b.x + b.vx * dt, y = b.y + b.vy * dt, vx = b.vx, vy = b.vy
+                    if (x < r) { x = r; vx = Math.abs(vx) }
+                    if (x > width - r) { x = width - r; vx = -Math.abs(vx) }
+                    if (y < titleH + r) { y = titleH + r; vy = Math.abs(vy) }
+                    // Paddle: where the ball lands along it sets the bounce angle.
+                    if (vy > 0 && y + r >= paddleY && b.y + r <= paddleY + paddleH
+                        && x >= paddleX - r && x <= paddleX + paddleW + r) {
+                      var rel = Math.max(-1, Math.min(1, (x - (paddleX + paddleW / 2)) / (paddleW / 2)))
+                      var ang = rel * 60 * Math.PI / 180
+                      vx = speed * Math.sin(ang); vy = -speed * Math.cos(ang)
+                      y = paddleY - r
+                    }
+                    // Boxes: the shallower overlap tells which face was struck.
+                    if (y - r < boxTop + rows * (boxH + boxGap)) {
+                      for (var k = 0; k < alive.length; k++) {
+                        if (!alive[k]) continue
+                        var bx = pad + (k % cols) * (boxW + boxGap)
+                        var by = boxTop + Math.floor(k / cols) * (boxH + boxGap)
+                        if (x + r <= bx || x - r >= bx + boxW || y + r <= by || y - r >= by + boxH) continue
+                        alive[k] = false; boxesLeft--; hit = true
+                        var ox = Math.min(x + r - bx, bx + boxW - (x - r))
+                        var oy = Math.min(y + r - by, by + boxH - (y - r))
+                        if (ox < oy) { vx = -vx; x += vx > 0 ? ox : -ox }
+                        else { vy = -vy; y += vy > 0 ? oy : -oy }
+                        break
+                      }
+                    }
+                    if (y - r > height) { balls.remove(i); continue }
+                    balls.set(i, { x: x, y: y, vx: vx, vy: vy, icon: b.icon })
+                  }
+                  if (hit) alive = alive.slice()
+                }
+
+                ListModel { id: balls }
+
+                Timer {
+                  interval: 16
+                  repeat: true
+                  running: root.gameOn && root.opened && root.editing === "" && balls.count > 0
+                  onTriggered: game.step()
+                }
+
+                Component.onCompleted: reset()
+
+                // Title bar, same dots as the window it is the back of.
+                Item {
+                  x: game.pad
+                  width: parent.width - game.pad * 2
+                  height: game.titleH
+
+                  Row {
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(5)
+                    Repeater {
+                      model: 3
+                      Rectangle { width: Style.space(7); height: width; radius: width / 2; color: Qt.alpha(root.foreground, 0.3) }
+                    }
+                  }
+
+                  Text {
+                    anchors.centerIn: parent
+                    textFormat: Text.PlainText
+                    text: "BOXES"
+                    color: root.faint
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+
+                  Text {
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    textFormat: Text.PlainText
+                    text: game.boxesLeft + " left · " + game.shots + (game.shots === 1 ? " shot" : " shots")
+                    color: root.muted
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+
+                Rectangle {
+                  x: 0; y: game.titleH
+                  width: parent.width
+                  height: Math.max(1, Style.space(1))
+                  color: Qt.alpha(root.foreground, 0.15)
+                }
+
+                Repeater {
+                  model: game.cols * game.rows
+                  Rectangle {
+                    required property int index
+                    x: game.pad + (index % game.cols) * (game.boxW + game.boxGap)
+                    y: game.boxTop + Math.floor(index / game.cols) * (game.boxH + game.boxGap)
+                    width: game.boxW
+                    height: game.boxH
+                    radius: Style.space(3)
+                    color: Qt.alpha(root.accent, 0.9 - Math.floor(index / game.cols) * 0.18)
+                    opacity: game.alive[index] ? 1 : 0
+                    scale: game.alive[index] ? 1 : 1.6
+                    Behavior on opacity { NumberAnimation { duration: 180 } }
+                    Behavior on scale { NumberAnimation { duration: 180 } }
+                  }
+                }
+
+                Repeater {
+                  model: balls
+                  Rectangle {
+                    required property var model
+                    x: model.x - width / 2
+                    y: model.y - width / 2
+                    width: game.ballR * 2
+                    height: width
+                    radius: width / 2
+                    color: root.accent
+                    Text {
+                      anchors.centerIn: parent
+                      textFormat: Text.PlainText
+                      text: model.icon
+                      color: Color.popups.background
+                      font.family: root.fontFamily
+                      font.pixelSize: game.ballR * 1.5
+                    }
+                  }
+                }
+
+                Rectangle {
+                  x: game.paddleX
+                  y: game.paddleY
+                  width: game.paddleW
+                  height: game.paddleH
+                  radius: height / 2
+                  color: root.foreground
+                  Behavior on x { NumberAnimation { duration: 50 } }
                 }
 
                 Text {
-                  anchors.verticalCenter: parent.verticalCenter
-                  x: sim.pad
-                  width: parent.width - sim.pad * 2
-                  visible: root.simStatus !== ""
+                  anchors.centerIn: parent
+                  width: parent.width - game.pad * 4
+                  visible: balls.count === 0
                   textFormat: Text.PlainText
-                  text: root.simStatus
-                  color: root.accent
+                  text: game.boxesLeft === 0
+                    ? "Cleared in " + game.shots + " shots. Press any key for another round."
+                    : "Turn the knob to move the bar, press a key to fire. The knob press starts over; a click turns the window back."
+                  color: root.faint
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
-                  font.bold: true
-                  elide: Text.ElideRight
+                  horizontalAlignment: Text.AlignHCenter
+                  wrapMode: Text.WordWrap
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.gameOn = false
                 }
               }
             }
@@ -911,6 +1179,32 @@ Panel {
 
               function tileWidth(rowWidth) {
                 return Math.floor((rowWidth - gap * (columns - 1)) / columns)
+              }
+
+              // Scroll the picker just enough that the tile is fully visible.
+              // Deferred a frame so freshly built tiles have been laid out
+              // by their Flow before their position is read.
+              property var revealTile: null
+              function reveal(tile) {
+                revealTile = tile
+                revealTimer.restart()
+              }
+              Timer {
+                id: revealTimer
+                interval: 30
+                onTriggered: {
+                  var tile = picker.revealTile
+                  picker.revealTile = null
+                  if (!tile || !tile.selected) return
+                  var flick = pickerScroll.contentItem
+                  var top = tile.mapToItem(pickerColumn, 0, 0).y
+                  var bottom = top + tile.height
+                  var margin = Style.space(8)
+                  var target = flick.contentY
+                  if (top < target) target = top - margin
+                  else if (bottom > target + flick.height) target = bottom - flick.height + margin
+                  flick.contentY = Math.max(0, Math.min(target, Math.max(0, flick.contentHeight - flick.height)))
+                }
               }
 
               Column {
@@ -962,6 +1256,7 @@ Panel {
                   clip: true
                   contentWidth: availableWidth
                   ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                  ScrollBar.vertical.policy: ScrollBar.AlwaysOff  // wheel and knob still scroll; the bar was too thin to grab
 
                   Column {
                     id: pickerColumn
