@@ -37,7 +37,17 @@ into `~/.config/omarchy/plugins/`, enables it and installs the rule.
 
 ## Using it
 
+Click any control to pick what it does. Presets are grouped by purpose, and
+there is a field for your own shell command or key combo.
+
 ![Picking an action for the Voice key](docs/picker.png)
+
+The knob has its own set of modes, and the herdr presets flip between your
+coding agents:
+
+| Turning the knob | Flipping agents in herdr |
+| --- | --- |
+| ![Knob modes](docs/picker-knob.png) | ![herdr presets](docs/picker-herdr.png) |
 
 - Open the panel from the bar icon. On the right it draws the keypad with each
   control's assignment beside it; on the left a small mock herdr window with

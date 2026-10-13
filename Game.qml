@@ -39,6 +39,7 @@ Rectangle {
   property int level: 1
   property int score: 0
   property int lastBonus: 0
+  property bool over: false
   property int knobBase: 0
   property real lastTick: 0
   // The knob's running notch count, measured from where the game started.
@@ -59,6 +60,7 @@ Rectangle {
     boxesLeft = cols * rows
     shots = 0
     lastBonus = 0
+    over = false
     balls.clear()
     knobBase = host.knobPosition
     lastTick = 0
@@ -71,6 +73,7 @@ Rectangle {
 
   // key1 fires up-left, key2 straight up, key3 up-right.
   function fire(key) {
+    if (over) { reset(); return }
     if (boxesLeft === 0) { level++; newRound(); return }
     var a = (key === "key1" ? -30 : key === "key3" ? 30 : 0) * Math.PI / 180
     balls.append({
@@ -87,6 +90,7 @@ Rectangle {
     lastTick = now
     var r = ballR, hit = false
     var live = []
+    var lost = false
     for (var i = 0; i < balls.count; i++) {
       var b = balls.get(i)
       var x = b.x + b.vx * dt, y = b.y + b.vy * dt, vx = b.vx, vy = b.vy
@@ -122,8 +126,14 @@ Rectangle {
           break
         }
       }
-      if (y - r > height) continue  // lost off the bottom
+      if (y - r > height) { lost = true; break }  // missed by the bar: game over
       live.push({ x: x, y: y, vx: vx, vy: vy, icon: b.icon })
+    }
+    if (lost) {
+      over = true
+      balls.clear()
+      if (hit) alive = alive.slice()
+      return
     }
     // Balls bounce off each other: equal masses swap their speed
     // along the line between them, and are pushed apart so they
@@ -260,7 +270,7 @@ Rectangle {
   Text {
     anchors.centerIn: parent
     width: parent.width - game.pad * 4
-    visible: balls.count === 0
+    visible: balls.count === 0 && !game.over
     textFormat: Text.PlainText
     text: game.boxesLeft === 0
       ? "Level " + game.level + " cleared in " + game.shots + (game.shots === 1 ? " shot" : " shots")
@@ -273,6 +283,61 @@ Rectangle {
     font.pixelSize: Style.font.caption
     horizontalAlignment: Text.AlignHCenter
     wrapMode: Text.WordWrap
+  }
+
+  // Shown when a ball gets past the bar.
+  Rectangle {
+    anchors.fill: parent
+    visible: game.over
+    color: Qt.alpha(Color.popups.background, 0.75)
+
+    Rectangle {
+      anchors.centerIn: parent
+      width: Math.min(parent.width - game.pad * 4, Style.space(220))
+      height: dialogCol.implicitHeight + game.pad * 2
+      radius: Style.space(10)
+      color: Color.popups.background
+      border.width: Math.max(1, Style.space(1))
+      border.color: Qt.alpha(host.foreground, 0.35)
+
+      Column {
+        id: dialogCol
+        anchors.centerIn: parent
+        width: parent.width - game.pad * 2
+        spacing: Style.space(6)
+
+        Text {
+          width: parent.width
+          textFormat: Text.PlainText
+          text: "GAME OVER"
+          color: host.foreground
+          font.family: host.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+          horizontalAlignment: Text.AlignHCenter
+        }
+        Text {
+          width: parent.width
+          textFormat: Text.PlainText
+          text: game.score + " pts on level " + game.level
+          color: host.foreground
+          font.family: host.fontFamily
+          font.pixelSize: Style.font.caption
+          horizontalAlignment: Text.AlignHCenter
+          wrapMode: Text.WordWrap
+        }
+        Text {
+          width: parent.width
+          textFormat: Text.PlainText
+          text: "A ball got past the bar. Press a key to play again."
+          color: host.faint
+          font.family: host.fontFamily
+          font.pixelSize: Style.font.caption
+          horizontalAlignment: Text.AlignHCenter
+          wrapMode: Text.WordWrap
+        }
+      }
+    }
   }
 
   MouseArea {
