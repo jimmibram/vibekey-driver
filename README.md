@@ -1,9 +1,13 @@
 # Vibekey for Omarchy
 
-A driver and control panel for the [Ulanzi Vibekey](https://www.ulanzi.com/products/au05-vibe-key-ai-voice-input-keypad-i018)
-(AU05) on [Omarchy](https://omarchy.org). It adds a Vibekey icon to the bar; the
-popup shows the keypad's status and battery and lets you assign any action to its
-three keys and the knob.
+Turn the [Ulanzi Vibekey](https://www.ulanzi.com/products/au05-vibe-key-ai-voice-input-keypad-i018)
+(AU05), a small USB keypad with a knob, into a programmable control surface for
+[Omarchy](https://omarchy.org). A Vibekey icon in the bar opens a panel drawn as
+the keypad itself: assign any action to its three keys and the knob, see the
+battery and connection status, and try every assignment in a live preview
+before it runs for real.
+
+![The Vibekey panel: a mock window that reacts to the keypad, and the keypad with each control's assignment](preview.png)
 
 ```
   ┌───────────┐
@@ -32,6 +36,8 @@ From a checkout, `./install.sh` does the same without git: it copies the plugin
 into `~/.config/omarchy/plugins/`, enables it and installs the rule.
 
 ## Using it
+
+![Picking an action for the Voice key](docs/picker.png)
 
 - Open the panel from the bar icon. On the right it draws the keypad with each
   control's assignment beside it; on the left a small mock herdr window with
