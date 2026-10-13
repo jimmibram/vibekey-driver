@@ -966,7 +966,7 @@ Panel {
                 readonly property real paddleY: height - Style.space(18)
                 readonly property real notch: Style.space(10)   // paddle travel per knob click
                 readonly property real ballR: Style.space(6)
-                readonly property real speed: Style.spaceReal(190) * (1 + 0.12 * (level - 1)) // per second
+                readonly property real speed: Style.spaceReal(190) * (1 + 0.2 * (level - 1)) // per second, a fifth faster each level
                 readonly property var icons: ({ key1: "\u{F036C}", key2: "\u{F012C}", key3: "\u{F0156}" })
 
                 property var alive: []
