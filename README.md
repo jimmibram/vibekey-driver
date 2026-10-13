@@ -108,6 +108,31 @@ running it flips between herdr workspaces instead; with no herdr open it says so
 - `bin/vibekeyd --probe` prints every decoded control event; handy to see what
   your keypad sends.
 
+## What it does to your system
+
+Read this before installing; it is everything the plugin touches.
+
+- **Background daemon.** While the widget is in the bar, the panel runs
+  `bin/vibekeyd` as a child process. It opens the Vibekey's `/dev/hidraw*` and
+  `/dev/input/event*` nodes, and **grabs** the keypad's keyboard events so the
+  factory Enter/Escape/PrintScreen keystrokes never reach your apps. It stops
+  when the shell does. `vibekeyd --no-grab` leaves them alone.
+- **Runs your commands.** Whatever you assign to a control runs as you, through
+  `bash -c`, from `~/.config/omarchy/vibekey/config.json`. The plugin never
+  fetches or ships commands; the presets are listed in `actions.json`. Treat
+  that config file like a shell profile: anyone who can write it can run
+  commands as you.
+- **One system file.** *Grant device access* installs
+  `/etc/udev/rules.d/70-ulanzi-vibekey.rules` through `sudo`/`pkexec`, and
+  nothing else needs root. The rule only matches USB `fff1:00dd` and grants the
+  logged-in user access (`uaccess`) to that device's hidraw and input nodes.
+  Remove it with `bin/vibekey-install-access --remove`.
+- **Files it writes.** `~/.config/omarchy/vibekey/` (config, learned keys) and
+  `$XDG_RUNTIME_DIR/vibekey/` (live state, preview heartbeat).
+- **Network.** The daemon uses none. Only the optional *herdr agent* presets
+  talk to a herdr session, locally or, with `--remote <host>`, over `ssh`
+  (key-based, `BatchMode`, a control socket under `$XDG_RUNTIME_DIR/vibekey/`).
+
 ## Requirements
 
 - Omarchy 4 (the Quickshell `omarchy-shell`), Python 3, `wtype` (ships with
@@ -118,8 +143,9 @@ running it flips between herdr workspaces instead; with no herdr open it says so
 ## Uninstall
 
 ```bash
+# optional: drop the udev rule first, while the helper still exists
+~/.config/omarchy/plugins/jimmibram.vibekey/bin/vibekey-install-access --remove
 omarchy plugin remove jimmibram.vibekey
-sudo rm /etc/udev/rules.d/70-ulanzi-vibekey.rules   # optional
 ```
 
 ## License
