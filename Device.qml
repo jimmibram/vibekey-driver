@@ -12,7 +12,7 @@ Item {
   height: implicitHeight
 
   readonly property real bodyWidth: Style.space(104)
-  readonly property real bodyHeight: Style.space(318)
+  readonly property real bodyHeight: Style.space(334)
   readonly property real knobSize: Style.space(80)
   readonly property real knobCenterY: Style.space(92)
   readonly property real keySize: Style.space(40)
