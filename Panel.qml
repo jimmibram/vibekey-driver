@@ -1022,7 +1022,8 @@ Panel {
                   var dt = lastTick > 0 ? Math.min(0.04, (now - lastTick) / 1000) : 0.016
                   lastTick = now
                   var r = ballR, hit = false
-                  for (var i = balls.count - 1; i >= 0; i--) {
+                  var live = []
+                  for (var i = 0; i < balls.count; i++) {
                     var b = balls.get(i)
                     var x = b.x + b.vx * dt, y = b.y + b.vy * dt, vx = b.vx, vy = b.vy
                     if (x < r) { x = r; vx = Math.abs(vx) }
@@ -1057,9 +1058,34 @@ Panel {
                         break
                       }
                     }
-                    if (y - r > height) { balls.remove(i); continue }
-                    balls.set(i, { x: x, y: y, vx: vx, vy: vy, icon: b.icon })
+                    if (y - r > height) continue  // lost off the bottom
+                    live.push({ x: x, y: y, vx: vx, vy: vy, icon: b.icon })
                   }
+                  // Balls bounce off each other: equal masses swap their speed
+                  // along the line between them, and are pushed apart so they
+                  // don't stick.
+                  for (var p = 0; p < live.length; p++) {
+                    for (var q = p + 1; q < live.length; q++) {
+                      var A = live[p], B = live[q]
+                      var dx = B.x - A.x, dy = B.y - A.y
+                      var d = Math.sqrt(dx * dx + dy * dy)
+                      if (d >= 2 * r || d === 0) continue
+                      var nx = dx / d, ny = dy / d
+                      var along = (B.vx - A.vx) * nx + (B.vy - A.vy) * ny
+                      if (along < 0) {  // closing in, not already parting
+                        A.vx += along * nx; A.vy += along * ny
+                        B.vx -= along * nx; B.vy -= along * ny
+                      }
+                      var push = (2 * r - d) / 2 + 0.5
+                      A.x -= nx * push; A.y -= ny * push
+                      B.x += nx * push; B.y += ny * push
+                    }
+                  }
+                  for (var m = 0; m < live.length; m++) {
+                    if (m < balls.count) balls.set(m, live[m])
+                    else balls.append(live[m])
+                  }
+                  while (balls.count > live.length) balls.remove(balls.count - 1)
                   if (hit) alive = alive.slice()
                 }
 
