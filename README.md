@@ -29,9 +29,13 @@ ones it starts with; change any of them from the panel.
 omarchy plugin add https://github.com/jimmibram/vibekey-driver.git --enable
 ```
 
-Then click the Vibekey icon in the bar and press **Grant device access**. That
-installs one udev rule (`/etc/udev/rules.d/70-ulanzi-vibekey.rules`) so your
-login may read the keypad; it asks for your password once and needs no replug.
+Nothing else is needed, whatever the Omarchy marketplace listing says: run
+that command, then click the Vibekey icon in the bar and press
+**Grant device access**, and everything works.
+
+Pressing **Grant device access** installs one udev rule
+(`/etc/udev/rules.d/70-ulanzi-vibekey.rules`) so your login may read the
+keypad; it asks for your password once and needs no replug.
 
 From a checkout, `./install.sh` does the same without git: it copies the plugin
 into `~/.config/omarchy/plugins/`, enables it and installs the rule.
