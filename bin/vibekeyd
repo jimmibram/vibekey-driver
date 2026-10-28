@@ -101,7 +101,9 @@ CONSUMER_USAGES = {
 
 # The six physical controls and the HID usages they send from the factory.
 # The Voice key has been seen as ErrorRollOver and as Super+H (the Windows
-# voice-typing shortcut); knob rotation as arrow keys and as mouse wheel ticks.
+# voice-typing shortcut); knob rotation as Right/Backspace keys and as mouse
+# wheel ticks. Firmware that turns as wheel ticks sends Backspace for the knob
+# press instead, which Daemon.slot_for tells apart.
 DEFAULT_SLOTS = {
     "kbd:0x01": "key1",
     "kbd:super+0x0b": "key1",
@@ -302,12 +304,17 @@ class Config:
     def battery(self):
         return self.data.get("battery", True) is not False
 
-    def slot_for(self, raw_id):
+    def aliased(self, raw_id):
+        """True when the user has learned this control as one of the six."""
         aliases = self.data.get("aliases")
-        if isinstance(aliases, dict):
-            slot = aliases.get(raw_id)
-            if isinstance(slot, str) and slot in SLOT_LABELS:
-                return slot
+        if not isinstance(aliases, dict):
+            return False
+        slot = aliases.get(raw_id)
+        return isinstance(slot, str) and slot in SLOT_LABELS
+
+    def slot_for(self, raw_id):
+        if self.aliased(raw_id):
+            return self.data["aliases"][raw_id]
         return DEFAULT_SLOTS.get(raw_id)
 
     def scroll_knob(self):
@@ -339,6 +346,11 @@ class Seen:
         self.data = read_json(path, {})
         if not isinstance(self.data.get("controls"), dict):
             self.data["controls"] = {}
+
+    def has(self, *raw_ids):
+        """True when the device has ever sent one of these controls."""
+        controls = self.data["controls"]
+        return any(isinstance(controls.get(raw_id), dict) for raw_id in raw_ids)
 
     def note(self, raw_id, slot, label):
         controls = self.data["controls"]
@@ -818,8 +830,19 @@ class Daemon:
         self.state.set(connected=False, grabbed=False, device=None, battery=None)
         self.next_rescan = time.monotonic() + RESCAN_INTERVAL
 
-    def handle_control(self, raw_id, label, phase):
+    def slot_for(self, raw_id):
         slot = self.config.slot_for(raw_id)
+        # Backspace is the knob turning left on firmware that reports turns as
+        # Right/Backspace, but the knob press on firmware that reports turns
+        # as wheel ticks. Once wheel ticks have been seen and Right never has,
+        # it is the press. A learned alias always wins.
+        if raw_id == "kbd:0x2a" and slot == "knob_left" and not self.config.aliased(raw_id) \
+                and self.seen.has("wheel:cw", "wheel:ccw") and not self.seen.has("kbd:0x4f"):
+            slot = "knob"
+        return slot
+
+    def handle_control(self, raw_id, label, phase):
+        slot = self.slot_for(raw_id)
         entry = self.config.button(raw_id, slot)
         preview = self.preview_active()
         action = None if preview else run_action(entry, phase)

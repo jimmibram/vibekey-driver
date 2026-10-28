@@ -114,8 +114,10 @@ running it flips between herdr workspaces instead; with no herdr open it says so
 - The six controls are identified by what they send from the factory: Voice
   key = HID usage `0x01` (or Super+H, the Windows voice-typing shortcut, on
   some firmware), ✓ = Enter, ✕ = Escape, knob press = PrintScreen, knob turn =
-  mouse wheel (or Right/Backspace on some firmware). Anything else is a raw id
-  you can learn as one of the six.
+  mouse wheel. Other firmware turns as Right/Backspace and presses as
+  PrintScreen, or turns as wheel ticks and presses as Backspace; the daemon
+  tells those apart by what it has seen. Anything else is a raw id you can
+  learn as one of the six.
 - While the panel is open it heartbeats `$XDG_RUNTIME_DIR/vibekey/preview`; the
   daemon then reports controls without running them and holds the wheel back.
 - Assignments live in `~/.config/omarchy/vibekey/config.json`:
