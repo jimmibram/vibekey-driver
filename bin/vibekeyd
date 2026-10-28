@@ -5,8 +5,9 @@ What it does
   * Finds the Vibekey dongle (USB fff1:00dd) and holds both of its raw HID
     channels open. The dongle reboots every ~4 s when nothing holds them.
   * Reads the standard HID reports straight from hidraw, so the Voice key is
-    seen too: it sends the HID "ErrorRollOver" usage (0x01), which the kernel
-    treats as an error state and never turns into a key press.
+    seen too: from the factory it sends the HID "ErrorRollOver" usage (0x01),
+    which the kernel treats as an error state and never turns into a key
+    press. Other firmware sends Super+H (Windows voice typing) instead.
   * Grabs the device's evdev nodes (EVIOCGRAB) so its factory keystrokes
     (Enter, Esc, PrintScreen, arrows, Backspace) no longer reach the
     compositor. Every control runs the action assigned to it in
@@ -42,6 +43,8 @@ PRODUCT_NAME = "Ulanzi Vibekey"
 CONFIG_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "omarchy", "vibekey")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 SEEN_PATH = os.path.join(CONFIG_DIR, "seen.json")
+PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+ACTIONS_PATH = os.path.join(PLUGIN_DIR, "actions.json")  # the preset catalogue; only read to seed a fresh config
 RUNTIME_DIR = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "vibekey")
 STATE_PATH = os.path.join(RUNTIME_DIR, "state.json")
 LOCK_PATH = os.path.join(RUNTIME_DIR, "lock")
@@ -97,9 +100,11 @@ CONSUMER_USAGES = {
 }
 
 # The six physical controls and the HID usages they send from the factory.
-# Knob rotation has been seen both as arrow keys and as mouse wheel ticks.
+# The Voice key has been seen as ErrorRollOver and as Super+H (the Windows
+# voice-typing shortcut); knob rotation as arrow keys and as mouse wheel ticks.
 DEFAULT_SLOTS = {
     "kbd:0x01": "key1",
+    "kbd:super+0x0b": "key1",
     "kbd:0x28": "key2",
     "kbd:0x29": "key3",
     "kbd:0x46": "knob",
@@ -216,11 +221,70 @@ def write_json_inplace(path, data):
         os.close(fd)
 
 
+def preset_entry(preset, tag, fields):
+    """The config entry a catalogue preset stands for: the fields are copied
+    (the same shape Model.js writes) so the daemon never needs the catalogue
+    once the config exists."""
+    entry = {"preset": tag, "label": str(preset.get("label") or "")}
+    for field in fields:
+        value = preset.get(field)
+        if isinstance(value, str) and value:
+            entry[field] = value
+    return entry
+
+
+def default_buttons(catalogue):
+    """Buttons for a first-run config, from the "defaults" block of actions.json:
+    a preset id per key slot, plus "knob_turn" naming a knob mode."""
+    defaults = catalogue.get("defaults")
+    if not isinstance(defaults, dict):
+        return {}
+    presets = {p["id"]: p for p in catalogue.get("presets") or [] if isinstance(p, dict) and p.get("id")}
+    modes = {p["id"]: p for p in catalogue.get("knob_turn") or [] if isinstance(p, dict) and p.get("id")}
+    buttons = {}
+    for slot, preset_id in defaults.items():
+        if slot == "knob_turn":
+            mode = modes.get(preset_id)
+            if not mode:
+                continue
+            for side, key in (("right", "knob_right"), ("left", "knob_left")):
+                source = mode.get(side) if isinstance(mode.get(side), dict) else {}
+                entry = preset_entry(mode, "knob:" + str(preset_id), ())
+                for field in ("command", "keys", "scroll", "release_command", "release_keys"):
+                    if isinstance(source.get(field), str) and source[field]:
+                        entry[field] = source[field]
+                buttons[key] = entry
+        elif slot in SLOT_LABELS and preset_id in presets:
+            buttons[slot] = preset_entry(presets[preset_id], str(preset_id),
+                                         ("command", "keys", "release_command", "release_keys"))
+    return buttons
+
+
+def seed_config(path=CONFIG_PATH, actions_path=ACTIONS_PATH):
+    """Write the first-run config when none exists, so a freshly connected
+    keypad does something useful before the panel is ever opened. A config
+    the user emptied on purpose is left alone: only a missing file is seeded."""
+    if os.path.exists(path):
+        return False
+    catalogue = read_json(actions_path, {})
+    buttons = default_buttons(catalogue)
+    if not buttons:
+        return False
+    try:
+        write_json_atomic(path, {"grab": True, "battery": True, "aliases": {}, "buttons": buttons})
+    except OSError as error:
+        log("could not write the default config:", error)
+        return False
+    log("wrote default assignments to", path, "for", ", ".join(sorted(buttons)))
+    return True
+
+
 class Config:
     def __init__(self, path):
         self.path = path
         self.mtime = None
         self.data = {}
+        seed_config(path)
         self.reload(force=True)
 
     def reload(self, force=False):

@@ -1,5 +1,12 @@
 {
   "version": 1,
+  "defaults": {
+    "key1": "dictation_ptt",
+    "key2": "herdr_next",
+    "key3": "key_ctrl_c",
+    "knob": "key_enter",
+    "knob_turn": "scroll"
+  },
   "presets": [
     {
       "id": "dictation_ptt",

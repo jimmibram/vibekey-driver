@@ -12,15 +12,16 @@ before it runs for real.
 ```
   ┌───────────┐
   │  ◉ Voice  │     Voice key   → push-to-talk dictation
-  │  ✓     ✕  │     ✓ Confirm   → Enter        ✕ Cancel → Escape
-  │    (◎)    │     Knob press  → mute mic     turn → volume
+  │  ✓     ✕  │     ✓ Confirm   → next agent in herdr   ✕ Cancel → Ctrl+C
+  │    (◎)    │     Knob press  → Enter                 turn → scroll
   └───────────┘
 ```
 
 Out of the box the Vibekey is a plain keyboard that types Enter, Escape,
 PrintScreen and arrows, and its Voice key sends a code Linux throws away. This
 plugin reads the keypad directly, keeps those factory keystrokes away from your
-apps, and runs whatever you picked instead.
+apps, and runs whatever you picked instead. The assignments drawn above are the
+ones it starts with; change any of them from the panel.
 
 ## Install
 
@@ -36,6 +37,17 @@ From a checkout, `./install.sh` does the same without git: it copies the plugin
 into `~/.config/omarchy/plugins/`, enables it and installs the rule.
 
 ## Using it
+
+The first time the driver runs it writes a starting set of assignments, so the
+keypad is useful before you open the panel:
+
+| Control | Does |
+| --- | --- |
+| Voice key | Push-to-talk dictation (hold to record, release to transcribe) |
+| ✓ Confirm | Next agent in herdr |
+| ✕ Cancel | Ctrl+C, interrupting the running agent |
+| Knob press | Enter |
+| Knob turn | Scroll, like a mouse wheel |
 
 Click any control to pick what it does. Presets are grouped by purpose, and
 there is a field for your own shell command or key combo.
@@ -100,9 +112,10 @@ running it flips between herdr workspaces instead; with no herdr open it says so
   Battery level comes over the vendor channel (report `0x55`, TEA-encrypted),
   following the protocol documented by [MrCroxx/olanzi](https://github.com/MrCroxx/olanzi).
 - The six controls are identified by what they send from the factory: Voice
-  key = HID usage `0x01`, ✓ = Enter, ✕ = Escape, knob press = PrintScreen, knob
-  turn = mouse wheel (or Right/Backspace on some firmware). Anything else is a raw
-  id you can learn as one of the six.
+  key = HID usage `0x01` (or Super+H, the Windows voice-typing shortcut, on
+  some firmware), ✓ = Enter, ✕ = Escape, knob press = PrintScreen, knob turn =
+  mouse wheel (or Right/Backspace on some firmware). Anything else is a raw id
+  you can learn as one of the six.
 - While the panel is open it heartbeats `$XDG_RUNTIME_DIR/vibekey/preview`; the
   daemon then reports controls without running them and holds the wheel back.
 - Assignments live in `~/.config/omarchy/vibekey/config.json`:
@@ -119,8 +132,10 @@ running it flips between herdr workspaces instead; with no herdr open it says so
   ```
 
   `bin/vibekey-config` edits it atomically (`show`, `set-button`, `set`), and the
-  daemon reloads it on change. Live state for the panel is in
-  `$XDG_RUNTIME_DIR/vibekey/state.json`.
+  daemon reloads it on change. When the file does not exist yet the daemon
+  writes it from the `defaults` block of `actions.json` (a preset id per
+  control); a file you emptied yourself is left alone. Live state for the panel
+  is in `$XDG_RUNTIME_DIR/vibekey/state.json`.
 - `bin/vibekeyd --probe` prints every decoded control event; handy to see what
   your keypad sends.
 
