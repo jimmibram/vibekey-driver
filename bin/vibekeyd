@@ -951,18 +951,22 @@ def die_with_parent():
 
 
 def acquire_lock():
+    """Become the one driver. With a bar on every monitor, each bar's panel
+    starts a vibekeyd; the ones that lose wait here as standbys instead of
+    exiting (their panels would restart them every few seconds) and the first
+    in line takes over the moment the driver's bar goes away, e.g. when the
+    monitor it sits on is unplugged. SIGTERM, including the parent-death
+    signal, still ends a standby: no handler is installed yet."""
     os.makedirs(RUNTIME_DIR, exist_ok=True)
     fd = os.open(LOCK_PATH, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
-    deadline = time.monotonic() + 5.0
-    while True:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return fd
-        except BlockingIOError:
-            if time.monotonic() >= deadline:
-                log("another vibekeyd holds the device; exiting")
-                sys.exit(0)
-            time.sleep(0.2)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fd
+    except BlockingIOError:
+        log("another vibekeyd holds the device; standing by")
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    log("the other vibekeyd is gone; taking over")
+    return fd
 
 
 def main(argv):
